@@ -1,5 +1,5 @@
 # Binaries
-velero-backup-reporter
+/velero-backup-reporter
 *.exe
 
 # Frontend dependencies

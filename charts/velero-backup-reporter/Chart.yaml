@@ -1,0 +1,16 @@
+apiVersion: v2
+name: velero-backup-reporter
+description: Backup report generator and web UI for Velero
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+maintainers:
+  - name: MichaelTrip
+    url: https://github.com/MichaelTrip
+sources:
+  - https://github.com/MichaelTrip/velero-backup-reporter
+keywords:
+  - velero
+  - backup
+  - kubernetes
+  - monitoring

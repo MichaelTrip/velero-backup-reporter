@@ -1,0 +1,98 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "velero-backup-reporter.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "velero-backup-reporter.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "velero-backup-reporter.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "velero-backup-reporter.selectorLabels" . | nindent 8 }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "velero-backup-reporter.serviceAccountName" . }}
+      containers:
+        - name: {{ .Chart.Name }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.config.port }}
+              protocol: TCP
+          env:
+            - name: NAMESPACE
+              value: {{ .Values.config.namespace | quote }}
+            - name: PORT
+              value: {{ .Values.config.port | quote }}
+            - name: COLLECTION_INTERVAL
+              value: {{ .Values.config.collectionInterval | quote }}
+            {{- if .Values.email.enabled }}
+            - name: EMAIL_ENABLED
+              value: "true"
+            - name: EMAIL_SCHEDULE
+              value: {{ .Values.email.schedule | quote }}
+            - name: SMTP_HOST
+              value: {{ .Values.email.smtp.host | quote }}
+            - name: SMTP_PORT
+              value: {{ .Values.email.smtp.port | quote }}
+            - name: SMTP_FROM
+              value: {{ .Values.email.smtp.from | quote }}
+            - name: SMTP_TO
+              value: {{ join "," .Values.email.smtp.to | quote }}
+            - name: SMTP_TLS
+              value: {{ .Values.email.smtp.tls | quote }}
+            {{- if .Values.email.existingSecret }}
+            - name: SMTP_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.email.existingSecret }}
+                  key: smtp-username
+            - name: SMTP_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.email.existingSecret }}
+                  key: smtp-password
+            {{- else }}
+            - name: SMTP_USERNAME
+              value: {{ .Values.email.smtp.username | quote }}
+            - name: SMTP_PASSWORD
+              value: {{ .Values.email.smtp.password | quote }}
+            {{- end }}
+            {{- if .Values.email.testEnabled }}
+            - name: EMAIL_TEST_ENABLED
+              value: "true"
+            {{- end }}
+            {{- end }}
+          {{- with .Values.livenessProbe }}
+          livenessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.readinessProbe }}
+          readinessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

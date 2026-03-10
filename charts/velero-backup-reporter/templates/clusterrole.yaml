@@ -1,0 +1,13 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "velero-backup-reporter.fullname" . }}
+  labels:
+    {{- include "velero-backup-reporter.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["velero.io"]
+    resources: ["backups", "schedules", "podvolumebackups"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["velero.io"]
+    resources: ["downloadrequests"]
+    verbs: ["create", "get", "delete"]
