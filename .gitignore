@@ -1,0 +1,22 @@
+# Binaries
+velero-backup-reporter
+*.exe
+
+# Frontend dependencies
+web/frontend/node_modules/
+
+# Build output
+web/dist/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Claude Code
+.claude/

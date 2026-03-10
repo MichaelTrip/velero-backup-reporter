@@ -1,0 +1,118 @@
+package email
+
+import (
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/michael/velero-backup-reporter/internal/config"
+	"github.com/michael/velero-backup-reporter/internal/report"
+)
+
+func timePtr(t time.Time) *time.Time {
+	return &t
+}
+
+func TestNewSender(t *testing.T) {
+	cfg := config.SMTPConfig{
+		Host: "smtp.example.com",
+		Port: 587,
+		From: "test@example.com",
+		To:   []string{"admin@example.com"},
+	}
+
+	sender, err := NewSender(cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if sender == nil {
+		t.Fatal("expected non-nil sender")
+	}
+}
+
+func TestBuildMessage(t *testing.T) {
+	msg := buildMessage(
+		"from@example.com",
+		[]string{"to1@example.com", "to2@example.com"},
+		"Test Subject",
+		"<html><body>Hello</body></html>",
+	)
+
+	if !strings.Contains(msg, "From: from@example.com") {
+		t.Error("expected From header")
+	}
+	if !strings.Contains(msg, "To: to1@example.com, to2@example.com") {
+		t.Error("expected To header")
+	}
+	if !strings.Contains(msg, "Subject: Test Subject") {
+		t.Error("expected Subject header")
+	}
+	if !strings.Contains(msg, "Content-Type: text/html") {
+		t.Error("expected HTML content type")
+	}
+	if !strings.Contains(msg, "<html>") {
+		t.Error("expected HTML body")
+	}
+}
+
+func TestEmailTemplateRendering(t *testing.T) {
+	cfg := config.SMTPConfig{
+		Host: "smtp.example.com",
+		Port: 587,
+		From: "test@example.com",
+		To:   []string{"admin@example.com"},
+	}
+
+	sender, err := NewSender(cfg)
+	if err != nil {
+		t.Fatalf("creating sender: %v", err)
+	}
+
+	rpt := report.BackupReport{
+		GeneratedAt: time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC),
+		Summary: report.BackupSummary{
+			TotalBackups:   5,
+			Completed:      3,
+			Failed:         1,
+			PartiallyFailed: 1,
+			LastSuccessful: timePtr(time.Date(2024, 1, 15, 9, 0, 0, 0, time.UTC)),
+			LastFailed:     timePtr(time.Date(2024, 1, 14, 0, 0, 0, 0, time.UTC)),
+		},
+		ScheduleSummaries: []report.ScheduleSummary{
+			{
+				ScheduleName:     "daily",
+				LastBackupStatus: "Completed",
+				TotalBackups:     3,
+				SuccessfulBackups: 2,
+				SuccessRate:      66.7,
+			},
+		},
+		Backups: []report.BackupDetail{
+			{
+				Name:   "backup-1",
+				Status: "Completed",
+				StartTime: timePtr(time.Date(2024, 1, 15, 9, 0, 0, 0, time.UTC)),
+				Duration: 5 * time.Minute,
+				ItemsBackedUp: 100,
+				TotalItems: 100,
+			},
+		},
+	}
+
+	var buf strings.Builder
+	err = sender.template.Execute(&buf, rpt)
+	if err != nil {
+		t.Fatalf("template execution failed: %v", err)
+	}
+
+	html := buf.String()
+	if !strings.Contains(html, "Velero Backup Report") {
+		t.Error("expected report title in output")
+	}
+	if !strings.Contains(html, "2024-01-15") {
+		t.Error("expected date in output")
+	}
+	if !strings.Contains(html, "backup-1") {
+		t.Error("expected backup name in output")
+	}
+}
