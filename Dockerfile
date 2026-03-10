@@ -8,7 +8,7 @@ RUN npm ci
 COPY web/frontend/ .
 RUN npm run build
 
-FROM golang:1.24-alpine AS builder
+FROM golang:1.25-alpine AS builder
 
 ARG VERSION=dev
 
