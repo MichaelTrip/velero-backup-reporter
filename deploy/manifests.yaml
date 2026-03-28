@@ -50,7 +50,7 @@ spec:
       serviceAccountName: velero-backup-reporter
       containers:
         - name: velero-backup-reporter
-          image: ghcr.io/michaeltrip/velero-backup-reporter:v0.1.0
+          image: ghcr.io/michaeltrip/velero-backup-reporter:v0.2.0
           ports:
             - containerPort: 8080
               name: http
