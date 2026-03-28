@@ -40,6 +40,8 @@ spec:
               value: "true"
             - name: EMAIL_SCHEDULE
               value: {{ .Values.email.schedule | quote }}
+            - name: EMAIL_DETAILS_WINDOW
+              value: {{ .Values.email.detailsWindow | quote }}
             - name: SMTP_HOST
               value: {{ .Values.email.smtp.host | quote }}
             - name: SMTP_PORT

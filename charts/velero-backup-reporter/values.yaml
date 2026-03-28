@@ -55,6 +55,7 @@ email:
   enabled: false
   testEnabled: false
   schedule: "0 8 * * *"
+  detailsWindow: "24h"
   smtp:
     host: ""
     port: 587

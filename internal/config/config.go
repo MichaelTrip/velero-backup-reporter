@@ -19,19 +19,21 @@ type Config struct {
 }
 
 type SMTPConfig struct {
-	Host     string `mapstructure:"smtp-host"`
-	Port     int    `mapstructure:"smtp-port"`
-	Username string `mapstructure:"smtp-username"`
-	Password string `mapstructure:"smtp-password"`
-	From     string `mapstructure:"smtp-from"`
+	Host     string   `mapstructure:"smtp-host"`
+	Port     int      `mapstructure:"smtp-port"`
+	Username string   `mapstructure:"smtp-username"`
+	Password string   `mapstructure:"smtp-password"`
+	From     string   `mapstructure:"smtp-from"`
 	To       []string `mapstructure:"smtp-to"`
-	TLS      bool   `mapstructure:"smtp-tls"`
+	TLS      bool     `mapstructure:"smtp-tls"`
 }
 
 type EmailConfig struct {
-	Enabled     bool   `mapstructure:"email-enabled"`
-	Schedule    string `mapstructure:"email-schedule"`
-	TestEnabled bool   `mapstructure:"email-test-enabled"`
+	Enabled       bool          `mapstructure:"email-enabled"`
+	Schedule      string        `mapstructure:"email-schedule"`
+	DetailsWindow time.Duration `mapstructure:"email-details-window"`
+	TestEnabled   bool          `mapstructure:"email-test-enabled"`
+	SendReportNow bool          `mapstructure:"send-report-now"`
 }
 
 func Load() (*Config, error) {
@@ -88,7 +90,19 @@ func Load() (*Config, error) {
 	if cfg.Email.Schedule == "" {
 		cfg.Email.Schedule = "0 8 * * *"
 	}
+
+	detailsWindowStr := v.GetString("email-details-window")
+	if detailsWindowStr == "" {
+		detailsWindowStr = "24h"
+	}
+	detailsWindow, err := time.ParseDuration(detailsWindowStr)
+	if err != nil {
+		return nil, fmt.Errorf("parsing email-details-window: %w", err)
+	}
+	cfg.Email.DetailsWindow = detailsWindow
+
 	cfg.Email.TestEnabled = v.GetBool("email-test-enabled")
+	cfg.Email.SendReportNow = v.GetBool("send-report-now")
 
 	return cfg, nil
 }

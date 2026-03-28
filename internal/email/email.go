@@ -16,12 +16,13 @@ import (
 
 // Sender handles sending backup report emails.
 type Sender struct {
-	cfg      config.SMTPConfig
-	template *template.Template
+	cfg           config.SMTPConfig
+	detailsWindow time.Duration
+	template      *template.Template
 }
 
 // NewSender creates a new email Sender.
-func NewSender(cfg config.SMTPConfig) (*Sender, error) {
+func NewSender(cfg config.SMTPConfig, emailCfg config.EmailConfig) (*Sender, error) {
 	funcMap := template.FuncMap{
 		"formatTime": func(t *time.Time) string {
 			if t == nil {
@@ -66,13 +67,16 @@ func NewSender(cfg config.SMTPConfig) (*Sender, error) {
 	}
 
 	return &Sender{
-		cfg:      cfg,
-		template: tmpl,
+		cfg:           cfg,
+		detailsWindow: emailDetailsWindowOrDefault(emailCfg.DetailsWindow),
+		template:      tmpl,
 	}, nil
 }
 
 // Send sends a backup report email.
 func (s *Sender) Send(rpt report.BackupReport) error {
+	rpt.Backups = filterBackupDetailsWithinWindow(rpt.Backups, time.Now(), s.detailsWindow)
+
 	var body bytes.Buffer
 	if err := s.template.Execute(&body, rpt); err != nil {
 		return fmt.Errorf("rendering email template: %w", err)
@@ -135,6 +139,39 @@ func (s *Sender) Send(rpt report.BackupReport) error {
 	return nil
 }
 
+func emailDetailsWindowOrDefault(d time.Duration) time.Duration {
+	if d <= 0 {
+		return 24 * time.Hour
+	}
+	return d
+}
+
+func filterBackupDetailsWithinWindow(backups []report.BackupDetail, now time.Time, window time.Duration) []report.BackupDetail {
+	if len(backups) == 0 {
+		return backups
+	}
+
+	cutoff := now.Add(-window)
+	filtered := make([]report.BackupDetail, 0, len(backups))
+
+	for _, b := range backups {
+		runTime := b.StartTime
+		if runTime == nil {
+			runTime = b.CompletionTime
+		}
+
+		if runTime == nil {
+			continue
+		}
+
+		if !runTime.Before(cutoff) {
+			filtered = append(filtered, b)
+		}
+	}
+
+	return filtered
+}
+
 func buildMessage(from string, to []string, subject, htmlBody string) string {
 	var b strings.Builder
 	b.WriteString("From: " + from + "\r\n")
@@ -150,7 +187,7 @@ func buildMessage(from string, to []string, subject, htmlBody string) string {
 const emailTemplate = `<!DOCTYPE html>
 <html>
 <head><meta charset="UTF-8"></head>
-<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f7fa; padding: 20px;">
+<body style="margin: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f7fa; padding: 20px 12px; color: #111827;">
 <div style="max-width: 700px; margin: 0 auto; background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
 
 <div style="background: #1a2332; color: #fff; padding: 20px 24px;">
@@ -204,25 +241,38 @@ const emailTemplate = `<!DOCTYPE html>
     {{end}}
 
     {{if .Backups}}
-    <h2 style="margin: 0 0 16px; font-size: 16px; color: #333;">Backup Details</h2>
-    <table style="width: 100%; border-collapse: collapse;">
-        <tr style="background: #f0f2f5;">
-            <th style="padding: 8px 12px; text-align: left; border: 1px solid #eee;">Name</th>
-            <th style="padding: 8px 12px; text-align: left; border: 1px solid #eee;">Status</th>
-            <th style="padding: 8px 12px; text-align: left; border: 1px solid #eee;">Start</th>
-            <th style="padding: 8px 12px; text-align: left; border: 1px solid #eee;">Duration</th>
-            <th style="padding: 8px 12px; text-align: left; border: 1px solid #eee;">Items</th>
-        </tr>
-        {{range .Backups}}
-        <tr>
-            <td style="padding: 8px 12px; border: 1px solid #eee;">{{.Name}}</td>
-            <td style="padding: 8px 12px; border: 1px solid #eee; color: {{statusColor .Status}};">{{.Status}}</td>
-            <td style="padding: 8px 12px; border: 1px solid #eee;">{{formatTime .StartTime}}</td>
-            <td style="padding: 8px 12px; border: 1px solid #eee;">{{formatDuration .Duration}}</td>
-            <td style="padding: 8px 12px; border: 1px solid #eee;">{{.ItemsBackedUp}}/{{.TotalItems}}</td>
-        </tr>
-        {{end}}
-    </table>
+    <h2 style="margin: 0 0 16px; font-size: 16px; color: #333;">Backup Details (Last 24 Hours)</h2>
+	{{range .Backups}}
+	<table style="width: 100%; border-collapse: collapse; margin-bottom: 12px; border: 1px solid #e5e7eb; border-radius: 8px; overflow: hidden;">
+		<tr>
+			<td style="padding: 12px; border: 1px solid #e5e7eb; vertical-align: top;">
+				<div style="font-size: 14px; font-weight: 600; line-height: 1.4; word-break: break-word;">{{.Name}}</div>
+				{{if .ScheduleName}}
+				<div style="margin-top: 4px; font-size: 12px; color: #6b7280;">Schedule: {{.ScheduleName}}</div>
+				{{end}}
+			</td>
+			<td style="padding: 12px; border: 1px solid #e5e7eb; vertical-align: top; text-align: right; white-space: nowrap; color: {{statusColor .Status}}; font-size: 13px; font-weight: 600;">
+				{{.Status}}
+			</td>
+		</tr>
+		<tr>
+			<td style="padding: 8px 12px; border: 1px solid #e5e7eb; background: #f8f9fb; font-size: 12px; font-weight: 600; color: #4b5563; width: 35%;">Started</td>
+			<td style="padding: 8px 12px; border: 1px solid #e5e7eb; font-size: 13px; line-height: 1.4;">{{formatTime .StartTime}}</td>
+		</tr>
+		<tr>
+			<td style="padding: 8px 12px; border: 1px solid #e5e7eb; background: #f8f9fb; font-size: 12px; font-weight: 600; color: #4b5563;">Duration</td>
+			<td style="padding: 8px 12px; border: 1px solid #e5e7eb; font-size: 13px;">{{formatDuration .Duration}}</td>
+		</tr>
+		<tr>
+			<td style="padding: 8px 12px; border: 1px solid #e5e7eb; background: #f8f9fb; font-size: 12px; font-weight: 600; color: #4b5563;">Items Backed Up</td>
+			<td style="padding: 8px 12px; border: 1px solid #e5e7eb; font-size: 13px;">{{.ItemsBackedUp}} / {{.TotalItems}}</td>
+		</tr>
+		<tr>
+			<td style="padding: 8px 12px; border: 1px solid #e5e7eb; background: #f8f9fb; font-size: 12px; font-weight: 600; color: #4b5563;">Warnings / Errors</td>
+			<td style="padding: 8px 12px; border: 1px solid #e5e7eb; font-size: 13px;">{{.Warnings}} / {{.Errors}}</td>
+		</tr>
+	</table>
+	{{end}}
     {{end}}
 </div>
 

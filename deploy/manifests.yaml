@@ -61,6 +61,8 @@ spec:
               value: "8080"
             - name: COLLECTION_INTERVAL
               value: "5m"
+            - name: EMAIL_DETAILS_WINDOW
+              value: "24h"
           livenessProbe:
             httpGet:
               path: /healthz

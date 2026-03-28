@@ -1,0 +1,404 @@
+---
+applyTo:
+  - cmd/**/*.go
+  - internal/**/*.go
+  - "!**/*_test.go"
+description: Backend development guide for Go server, API, and Kubernetes integration
+---
+
+# Backend Development Guide
+
+This guide applies to Go backend development in `cmd/` and `internal/`.
+
+## Quick Start
+
+```bash
+# Build backend binary
+make backend
+# or
+CGO_ENABLED=0 go build -o velero-backup-reporter ./cmd/velero-backup-reporter/
+
+# Run standalone (requires kubeconfig)
+./velero-backup-reporter --kubeconfig ~/.kube/config --namespace velero --port 8080
+
+# Run with specific config
+./velero-backup-reporter --config config.yaml
+
+# Check available flags
+./velero-backup-reporter --help
+```
+
+## Code Organization
+
+### Main Entry Point: `cmd/velero-backup-reporter/main.go`
+
+- **Cobra CLI setup** — Defines all flags and environment variable bindings
+- **Signal handling** — Graceful shutdown on SIGINT/SIGTERM
+- **Component initialization** — Creates K8s client, collector, email sender, web server
+- **Goroutine management** — Spawns background tasks (collector, scheduler, HTTP server)
+
+**Pattern for adding new components:**
+1. Define flags in `rootCmd.Flags()`
+2. Bind to Viper: `viper.BindPFlags(rootCmd.Flags())`
+3. Load config after validation
+4. Pass to component constructors in `run()`
+5. Start as goroutine with context
+
+### Internal Packages
+
+#### `collector/` — Kubernetes Integration
+
+**Files:**
+- `client.go` — K8s client setup (in-cluster or kubeconfig auth)
+- `collector.go` — Watches Velero Backup/Schedule CRDs, aggregates data
+- `collector_test.go` — Tests for data collection logic
+
+**Key interfaces:**
+```go
+type KubeClient struct {
+    // client-go managed client set
+}
+
+type Collector struct {
+    client    *KubeClient
+    namespace string
+    interval  time.Duration
+    // cached backups/schedules
+}
+
+func (c *Collector) Run(ctx context.Context) error { }
+```
+
+**Patterns:**
+- Watches run in background via `informers` or periodic `List()` calls
+- Data access must be **thread-safe** (use locks if needed)
+- Errors logged, not panicked; graceful degradation on transient failures
+
+#### `config/` — Configuration Management
+
+**Files:**
+- `config.go` — Viper-based config loading (YAML + env vars + flags)
+- `validate.go` — Validation logic for required fields
+- `config_test.go` — Tests
+
+**Structure:**
+```go
+type Config struct {
+    Kubeconfig        string
+    Namespace         string
+    Port              int
+    CollectionInterval time.Duration
+    Email             EmailConfig
+    SMTP              SMTPConfig
+}
+
+type EmailConfig struct {
+    Enabled       bool
+    TestEnabled   bool
+    Schedule      string  // cron expression
+}
+
+type SMTPConfig struct {
+    Host     string
+    Port     int
+    Username string
+    Password string
+    TLS      bool
+}
+
+func Load() (*Config, error) { }
+func (c *Config) Validate() error { }
+```
+
+**Validation rules:**
+- `SMTP.Host` required if email is enabled
+- `SMTP.From`/`SMTP.To` required if email is enabled
+- Cron expression must be valid
+- Collection interval must be > 0
+
+**Priority order:** CLI flags > env vars > config file defaults
+
+#### `server/` — HTTP Server & API
+
+**File:** `server.go`
+
+**Handlers:**
+- `GET /` — Serve Vue frontend (from embedded `web/dist/`)
+- `GET /api/backups` — List all backups (JSON)
+- `GET /api/backups/:id` — Single backup details
+- `GET /api/schedules` — List schedules
+- `GET /api/dashboard` — Dashboard metrics
+- `POST /api/email/test` — Send test email (if enabled)
+
+**Pattern:**
+```go
+type Server struct {
+    collector *collector.Collector
+    emailSender *email.Sender  // optional
+    router *chi.Mux
+}
+
+func New(coll *collector.Collector, opts ...Option) (*Server, error) { }
+func (s *Server) Handler() http.Handler { }
+```
+
+**Tips:**
+- Use Chi for routing (lightweight, composable middleware)
+- Return JSON with appropriate status codes (200, 400, 500)
+- Wrap collector errors with context in responses
+- Log all handler errors, even if already returned to client
+
+#### `email/` — SMTP & Scheduling
+
+**Files:**
+- `email.go` — SMTP client with TLS support
+- `scheduler.go` — Cron-based job runner
+- `email_test.go` — Tests
+
+**Pattern:**
+```go
+type Sender struct {
+    host     string
+    port     int
+    username string
+    password string
+    from     string
+    tls      bool
+}
+
+func NewSender(cfg SMTPConfig) (*Sender, error) { }
+func (s *Sender) Send(to []string, subject, body string) error { }
+
+type Scheduler struct {
+    sender   *Sender
+    collector *collector.Collector
+    cronExpr string
+}
+
+func NewScheduler(sender *Sender, coll *collector.Collector, expr string) *Scheduler { }
+func (sch *Scheduler) Start(ctx context.Context) error { }
+```
+
+**Notes:**
+- TLS is enabled by default; verify flag logic in `email.go`
+- Scheduler uses `github.com/robfig/cron/v3` for parsing/execution
+- Email body generated by [internal/report/report.go](../internal/report/report.go)
+
+#### `report/` & `pdf/` — Report Generation
+
+**Files:**
+- `report.go` — HTML email template rendering
+- `pdf.go` — PDF export via fpdf
+- Tests for both
+
+Generate HTML/PDF from backup data with:
+- Status metrics
+- Backup table
+- Error details
+
+## Error Handling
+
+**Standard pattern:**
+```go
+if err != nil {
+    return fmt.Errorf("context/action: %w", err)
+}
+```
+
+**Logging errors:**
+```go
+log.Printf("ERROR: handler failed: %v", err)  // Always prefix with ERROR
+```
+
+**HTTP responses with errors:**
+```go
+if err != nil {
+    http.Error(w, fmt.Sprintf(`{"error":"%v"}`, err), http.StatusInternalServerError)
+    return
+}
+```
+
+## Testing
+
+**Test file naming:** `*_test.go` in same package
+
+**Pattern:**
+```go
+package collector
+
+import "testing"
+
+func TestCollectorInit(t *testing.T) {
+    // Arrange
+    cfg := &Config{ /* ... */ }
+
+    // Act
+    coll, err := New(cfg)
+
+    // Assert
+    if err != nil {
+        t.Fatalf("expected no error, got %v", err)
+    }
+    if coll == nil {
+        t.Fatal("expected non-nil collector")
+    }
+}
+```
+
+**Run tests:**
+```bash
+go test ./internal/...              # All internal packages
+go test ./internal/collector -v     # Verbose, single package
+go test -cover ./internal/...       # With coverage
+```
+
+**Mocking K8s client (recommended):**
+- Create mock types that satisfy `KubeClient` interface
+- Return canned data for tests
+- Avoid hitting real Kubernetes API in tests
+
+## Conventions
+
+1. **Package organization:** One responsibility per package (collector, config, email, etc.)
+2. **Constructors:** `func New(...) (*Type, error)` for initialization
+3. **Context threading:** Pass `ctx context.Context` through goroutines for cancellation
+4. **Struct embedding:** Group related fields (all SMTP settings in `SMTPConfig`)
+5. **Interface usage:** Design for testability (mock K8s client, mock SMTP sender)
+6. **Defer cleanup:** Release resources in `defer` blocks
+7. **Consistent logging:** `log.Println()` for INFO, `log.Printf("ERROR: ...")` for errors
+
+## Common Tasks
+
+### Adding a New API Endpoint
+
+1. Add handler function in `internal/server/server.go`:
+   ```go
+   func (s *Server) handleNewResource(w http.ResponseWriter, r *http.Request) {
+       data := s.collector.GetNewResource()
+       w.Header().Set("Content-Type", "application/json")
+       json.NewEncoder(w).Encode(data)
+   }
+   ```
+
+2. Register route in `Server.New()`:
+   ```go
+   r.Get("/api/new-resource", s.handleNewResource)
+   ```
+
+3. (Frontend) Call from Vue component:
+   ```javascript
+   const res = await fetch('/api/new-resource')
+   const data = await res.json()
+   ```
+
+### Adding a New Config Option
+
+1. Add field to struct in `internal/config/config.go`:
+   ```go
+   type Config struct {
+       MyNewOption string
+   }
+   ```
+
+2. Define flag in `cmd/main.go`:
+   ```go
+   rootCmd.Flags().String("my-new-option", "default", "Description")
+   ```
+
+3. Add validation in `internal/config/validate.go` (if required):
+   ```go
+   if cfg.MyNewOption == "" {
+       return errors.New("my-new-option is required")
+   }
+   ```
+
+4. Use in components (passed via `config` or constructor args)
+
+### Debugging Kubernetes Access
+
+```bash
+# Check if kubeconfig is valid
+kubectl config view
+kubectl auth can-i get backups.velero.io
+
+# Test API discovery
+kubectl api-resources | grep velero
+
+# View actual backup objects
+kubectl get backups -n velero
+kubectl describe backup <name> -n velero
+```
+
+## Useful Commands
+
+```bash
+# Build & test
+make build                           # Build both frontend + backend
+make backend                         # Build backend only
+go test ./internal/...               # Run all backend tests
+go vet ./...                         # Lint for issues
+gofmt -w .                           # Format all Go files
+
+# Development
+go run ./cmd/velero-backup-reporter/ --help
+go run ./cmd/velero-backup-reporter/ --kubeconfig ~/.kube/config
+
+# Coverage
+go test -cover ./internal/...
+go test -coverprofile=coverage.out ./internal/...
+go tool cover -html=coverage.out
+
+# Dependencies
+go mod tidy                          # Clean unused imports
+go mod verify                        # Verify integrity
+```
+
+## Dependencies
+
+| Package | Purpose | Notes |
+|---------|---------|-------|
+| `github.com/spf13/cobra` | CLI framework | Handles commands, flags, help |
+| `github.com/spf13/viper` | Config management | YAML/env/flag sources |
+| `github.com/go-chi/chi/v5` | HTTP router | Lightweight, composable |
+| `k8s.io/client-go` | Kubernetes API client | Lists/watches K8s resources |
+| `sigs.k8s.io/controller-runtime` | K8s controller utilities | High-level K8s abstractions |
+| `github.com/robfig/cron/v3` | Cron scheduling | Parses and executes cron expressions |
+| `github.com/go-pdf/fpdf` | PDF generation | PDF reports |
+| `github.com/vmware-tanzu/velero` | Velero types | Backup/Schedule CRD definitions |
+
+## Common Issues
+
+| Issue | Solution |
+|-------|----------|
+| `kubeconfig not found` | Provide `--kubeconfig ~/.kube/config` or set `KUBECONFIG` env var |
+| `permission denied: backups` | ServiceAccount needs read access to `velero.io/backups` (check RBAC) |
+| Collector never fetches data | Check `collector.Run()` is called in `main()` and context isn't cancelled |
+| Email sends fail | Verify SMTP host/port/auth; check TLS flag; test with `--email-test-enabled` |
+| Build includes stale frontend | Run `make frontend` before `make backend` |
+| Tests fail on environment differences | Use interfaces for K8s client; mock in tests instead of real API calls |
+
+## Graceful Shutdown Pattern
+
+See [cmd/main.go](../cmd/velero-backup-reporter/main.go) for the signal handling pattern:
+
+```go
+ctx, cancel := context.WithCancel(context.Background())
+defer cancel()
+
+sigCh := make(chan os.Signal, 1)
+signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+go func() {
+    <-sigCh
+    log.Println("INFO: shutdown signal received")
+    cancel()
+}()
+
+// Pass ctx to all goroutines; they'll exit when ctx is cancelled
+go collector.Run(ctx)
+go scheduler.Start(ctx)
+go httpServer.ListenAndServe()  // Will shutdown via <-ctx.Done() logic
+
+<-ctx.Done()  // Wait for shutdown
+```
+
+All goroutines must respect context cancellation (`<-ctx.Done()`).

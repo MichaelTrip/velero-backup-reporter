@@ -45,6 +45,7 @@ func New(c *collector.Collector, opts ...Option) (*Server, error) {
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Use(jsonContentType)
 		r.Get("/dashboard", s.handleAPIDashboard)
+		r.Get("/report", s.handleAPIReport)
 		r.Get("/backups", s.handleAPIBackups)
 		r.Get("/backups/{name}", s.handleAPIBackupDetail)
 		r.Get("/backups/{name}/logs", s.handleAPIBackupLogs)
@@ -139,7 +140,7 @@ func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 // API response types
 
 type dashboardResponse struct {
-	Summary      backupSummaryJSON    `json:"summary"`
+	Summary      backupSummaryJSON     `json:"summary"`
 	Schedules    []scheduleSummaryJSON `json:"schedules"`
 	EmailEnabled bool                  `json:"emailEnabled"`
 }
@@ -156,25 +157,25 @@ type backupSummaryJSON struct {
 }
 
 type scheduleSummaryJSON struct {
-	ScheduleName     string     `json:"scheduleName"`
-	TotalBackups     int        `json:"totalBackups"`
-	SuccessfulBackups int       `json:"successfulBackups"`
-	FailedBackups    int        `json:"failedBackups"`
-	LastBackupTime   *time.Time `json:"lastBackupTime"`
-	LastBackupStatus string     `json:"lastBackupStatus"`
-	SuccessRate      float64    `json:"successRate"`
+	ScheduleName      string     `json:"scheduleName"`
+	TotalBackups      int        `json:"totalBackups"`
+	SuccessfulBackups int        `json:"successfulBackups"`
+	FailedBackups     int        `json:"failedBackups"`
+	LastBackupTime    *time.Time `json:"lastBackupTime"`
+	LastBackupStatus  string     `json:"lastBackupStatus"`
+	SuccessRate       float64    `json:"successRate"`
 }
 
 type backupListItemJSON struct {
-	Name           string     `json:"name"`
-	ScheduleName   string     `json:"scheduleName"`
-	Status         string     `json:"status"`
-	StartTimestamp *time.Time `json:"startTimestamp"`
+	Name                string     `json:"name"`
+	ScheduleName        string     `json:"scheduleName"`
+	Status              string     `json:"status"`
+	StartTimestamp      *time.Time `json:"startTimestamp"`
 	CompletionTimestamp *time.Time `json:"completionTimestamp"`
-	Duration       string     `json:"duration"`
-	ItemsBackedUp  int        `json:"itemsBackedUp"`
-	Warnings       int        `json:"warnings"`
-	Errors         int        `json:"errors"`
+	Duration            string     `json:"duration"`
+	ItemsBackedUp       int        `json:"itemsBackedUp"`
+	Warnings            int        `json:"warnings"`
+	Errors              int        `json:"errors"`
 }
 
 type backupDetailJSON struct {
@@ -266,6 +267,97 @@ func (s *Server) handleAPIDashboard(w http.ResponseWriter, r *http.Request) {
 		},
 		Schedules:    schedules,
 		EmailEnabled: s.emailSender != nil,
+	}
+
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// reportResponse represents the complete backup report
+type reportResponse struct {
+	GeneratedAt     time.Time                    `json:"generatedAt"`
+	Summary         backupSummaryJSON            `json:"summary"`
+	Schedules       []scheduleSummaryJSON        `json:"schedules"`
+	PeriodSummaries map[string]periodSummaryJSON `json:"periodSummaries"`
+	Backups         []backupListItemJSON         `json:"backups"`
+}
+
+type periodSummaryJSON struct {
+	Period          string `json:"period"`
+	TotalBackups    int    `json:"totalBackups"`
+	Completed       int    `json:"completed"`
+	Failed          int    `json:"failed"`
+	PartiallyFailed int    `json:"partiallyFailed"`
+	AverageDuration string `json:"averageDuration"`
+	TotalItems      int    `json:"totalItems"`
+}
+
+func (s *Server) handleAPIReport(w http.ResponseWriter, r *http.Request) {
+	rpt := report.Generate(s.collector.Backups(), s.collector.Schedules())
+
+	// Sort schedules by name
+	sort.Slice(rpt.ScheduleSummaries, func(i, j int) bool {
+		return rpt.ScheduleSummaries[i].ScheduleName < rpt.ScheduleSummaries[j].ScheduleName
+	})
+
+	schedules := make([]scheduleSummaryJSON, 0, len(rpt.ScheduleSummaries))
+	for _, ss := range rpt.ScheduleSummaries {
+		failed := ss.TotalBackups - ss.SuccessfulBackups
+		schedules = append(schedules, scheduleSummaryJSON{
+			ScheduleName:      ss.ScheduleName,
+			TotalBackups:      ss.TotalBackups,
+			SuccessfulBackups: ss.SuccessfulBackups,
+			FailedBackups:     failed,
+			LastBackupTime:    ss.LastBackupTime,
+			LastBackupStatus:  ss.LastBackupStatus,
+			SuccessRate:       ss.SuccessRate,
+		})
+	}
+
+	// Convert period summaries
+	periodSummaries := make(map[string]periodSummaryJSON)
+	for periodName, ps := range rpt.PeriodSummaries {
+		periodSummaries[periodName] = periodSummaryJSON{
+			Period:          ps.Period,
+			TotalBackups:    ps.TotalBackups,
+			Completed:       ps.Completed,
+			Failed:          ps.Failed,
+			PartiallyFailed: ps.PartiallyFailed,
+			AverageDuration: formatDuration(ps.AverageDuration),
+			TotalItems:      ps.TotalItems,
+		}
+	}
+
+	// Convert backup details to JSON format (already sorted by date in report.Generate)
+	backups := make([]backupListItemJSON, 0, len(rpt.Backups))
+	for _, b := range rpt.Backups {
+		backups = append(backups, backupListItemJSON{
+			Name:                b.Name,
+			ScheduleName:        b.ScheduleName,
+			Status:              b.Status,
+			StartTimestamp:      b.StartTime,
+			CompletionTimestamp: b.CompletionTime,
+			Duration:            formatDuration(b.Duration),
+			ItemsBackedUp:       b.ItemsBackedUp,
+			Warnings:            b.Warnings,
+			Errors:              b.Errors,
+		})
+	}
+
+	resp := reportResponse{
+		GeneratedAt: rpt.GeneratedAt,
+		Summary: backupSummaryJSON{
+			Total:           rpt.Summary.TotalBackups,
+			Completed:       rpt.Summary.Completed,
+			Failed:          rpt.Summary.Failed,
+			PartiallyFailed: rpt.Summary.PartiallyFailed,
+			InProgress:      rpt.Summary.InProgress,
+			Deleting:        rpt.Summary.Deleting,
+			LastSuccessful:  rpt.Summary.LastSuccessful,
+			LastFailed:      rpt.Summary.LastFailed,
+		},
+		Schedules:       schedules,
+		PeriodSummaries: periodSummaries,
+		Backups:         backups,
 	}
 
 	writeJSON(w, http.StatusOK, resp)
@@ -366,33 +458,33 @@ func (s *Server) handleAPIBackupDetail(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp := backupDetailJSON{
-		Name:                        backup.Name,
-		Namespace:                   backup.Namespace,
-		Status:                      backup.Phase,
-		ScheduleName:                backup.ScheduleName,
-		StartTimestamp:              backup.StartTimestamp,
-		CompletionTimestamp:         backup.CompletionTimestamp,
-		Expiration:                  backup.Expiration,
-		Duration:                    formatDuration(duration),
-		TTL:                         backup.TTL,
-		StorageLocation:             backup.StorageLocation,
-		ItemsBackedUp:               backup.ItemsBackedUp,
-		TotalItems:                  backup.TotalItems,
-		Warnings:                    backup.Warnings,
-		Errors:                      backup.Errors,
-		IncludedNamespaces:          backup.IncludedNamespaces,
-		ExcludedNamespaces:          backup.ExcludedNamespaces,
-		IncludedResources:           backup.IncludedResources,
-		ExcludedResources:           backup.ExcludedResources,
-		Labels:                      backup.Labels,
-		Annotations:                 backup.Annotations,
-		VolumeSnapshotsAttempted:    backup.VolumeSnapshotsAttempted,
-		VolumeSnapshotsCompleted:    backup.VolumeSnapshotsCompleted,
-		CSIVolumeSnapshotsAttempted: backup.CSIVolumeSnapshotsAttempted,
-		CSIVolumeSnapshotsCompleted: backup.CSIVolumeSnapshotsCompleted,
-		FailureReason:               backup.FailureReason,
-		ValidationErrors:            backup.ValidationErrors,
-		IsTerminal:                  isTerminalPhase(backup.Phase),
+		Name:                          backup.Name,
+		Namespace:                     backup.Namespace,
+		Status:                        backup.Phase,
+		ScheduleName:                  backup.ScheduleName,
+		StartTimestamp:                backup.StartTimestamp,
+		CompletionTimestamp:           backup.CompletionTimestamp,
+		Expiration:                    backup.Expiration,
+		Duration:                      formatDuration(duration),
+		TTL:                           backup.TTL,
+		StorageLocation:               backup.StorageLocation,
+		ItemsBackedUp:                 backup.ItemsBackedUp,
+		TotalItems:                    backup.TotalItems,
+		Warnings:                      backup.Warnings,
+		Errors:                        backup.Errors,
+		IncludedNamespaces:            backup.IncludedNamespaces,
+		ExcludedNamespaces:            backup.ExcludedNamespaces,
+		IncludedResources:             backup.IncludedResources,
+		ExcludedResources:             backup.ExcludedResources,
+		Labels:                        backup.Labels,
+		Annotations:                   backup.Annotations,
+		VolumeSnapshotsAttempted:      backup.VolumeSnapshotsAttempted,
+		VolumeSnapshotsCompleted:      backup.VolumeSnapshotsCompleted,
+		CSIVolumeSnapshotsAttempted:   backup.CSIVolumeSnapshotsAttempted,
+		CSIVolumeSnapshotsCompleted:   backup.CSIVolumeSnapshotsCompleted,
+		FailureReason:                 backup.FailureReason,
+		ValidationErrors:              backup.ValidationErrors,
+		IsTerminal:                    isTerminalPhase(backup.Phase),
 		HooksAttempted:                backup.HooksAttempted,
 		HooksFailed:                   backup.HooksFailed,
 		BackupItemOperationsAttempted: backup.BackupItemOperationsAttempted,

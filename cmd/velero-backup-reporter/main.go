@@ -13,6 +13,7 @@ import (
 	"github.com/michael/velero-backup-reporter/internal/collector"
 	"github.com/michael/velero-backup-reporter/internal/config"
 	"github.com/michael/velero-backup-reporter/internal/email"
+	"github.com/michael/velero-backup-reporter/internal/report"
 	"github.com/michael/velero-backup-reporter/internal/server"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -42,8 +43,10 @@ func main() {
 	rootCmd.Flags().StringSlice("smtp-to", nil, "Email recipient addresses")
 	rootCmd.Flags().Bool("smtp-tls", true, "Enable SMTP TLS")
 	rootCmd.Flags().String("email-schedule", "0 8 * * *", "Cron schedule for email reports")
+	rootCmd.Flags().String("email-details-window", "24h", "Time window for backups shown in email report details (Go duration, e.g. 24h)")
 	rootCmd.Flags().Bool("email-enabled", false, "Enable email notifications")
 	rootCmd.Flags().Bool("email-test-enabled", false, "Enable the test email endpoint and UI button")
+	rootCmd.Flags().Bool("send-report-now", false, "Generate and send backup report immediately, then exit")
 
 	viper.BindPFlags(rootCmd.Flags())
 
@@ -63,6 +66,12 @@ func run(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("invalid config: %w", err)
 	}
 
+	// Handle on-demand report generation
+	if cfg.Email.SendReportNow {
+		return sendReportNow(cfg)
+	}
+
+	// Normal operation: start web server and collector
 	// Set up context with signal handling for graceful shutdown
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -90,7 +99,7 @@ func run(cmd *cobra.Command, args []string) error {
 	// Initialize email sender if enabled
 	serverOpts := []server.Option{server.WithKubeClient(kubeClient)}
 	if cfg.Email.Enabled {
-		sender, err := email.NewSender(cfg.SMTP)
+		sender, err := email.NewSender(cfg.SMTP, cfg.Email)
 		if err != nil {
 			return fmt.Errorf("creating email sender: %w", err)
 		}
@@ -106,7 +115,7 @@ func run(cmd *cobra.Command, args []string) error {
 				log.Printf("ERROR: email scheduler: %v", err)
 			}
 		}()
-		log.Printf("INFO: email notifications enabled, schedule: %s", cfg.Email.Schedule)
+		log.Printf("INFO: email notifications enabled, schedule: %s, details window: %s", cfg.Email.Schedule, cfg.Email.DetailsWindow)
 	}
 
 	// Initialize web server
@@ -137,5 +146,57 @@ func run(cmd *cobra.Command, args []string) error {
 	}
 
 	log.Println("INFO: server stopped")
+	return nil
+}
+
+// sendReportNow generates and sends a backup report immediately.
+func sendReportNow(cfg *config.Config) error {
+	// Validate SMTP configuration
+	if cfg.SMTP.Host == "" {
+		return fmt.Errorf("SMTP configuration required: smtp-host is missing")
+	}
+	if cfg.SMTP.From == "" {
+		return fmt.Errorf("SMTP configuration required: smtp-from is missing")
+	}
+	if len(cfg.SMTP.To) == 0 {
+		return fmt.Errorf("SMTP configuration required: smtp-to is required (at least one recipient)")
+	}
+
+	// Set up context
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	// Initialize Kubernetes client
+	kubeClient, err := collector.NewKubeClient(cfg.Kubeconfig)
+	if err != nil {
+		return fmt.Errorf("creating kubernetes client: %w", err)
+	}
+
+	// Initialize collector
+	coll := collector.New(kubeClient, cfg.Namespace, cfg.CollectionInterval)
+
+	// Collect backup and schedule data
+	log.Println("INFO: collecting backup data...")
+	if err := coll.Collect(ctx); err != nil {
+		return fmt.Errorf("collecting backup data: %w", err)
+	}
+
+	// Create email sender
+	sender, err := email.NewSender(cfg.SMTP, cfg.Email)
+	if err != nil {
+		return fmt.Errorf("creating email sender: %w", err)
+	}
+
+	// Generate report
+	log.Println("INFO: generating backup report...")
+	rpt := report.Generate(coll.Backups(), coll.Schedules())
+
+	// Send email
+	log.Printf("INFO: sending report to %v...", cfg.SMTP.To)
+	if err := sender.Send(rpt); err != nil {
+		return fmt.Errorf("sending report: %w", err)
+	}
+
+	log.Printf("INFO: backup report sent successfully to %v", cfg.SMTP.To)
 	return nil
 }

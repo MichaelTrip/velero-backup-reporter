@@ -156,6 +156,11 @@ func (c *Collector) Run(ctx context.Context) {
 	}
 }
 
+// Collect performs an immediate data collection (useful for one-time operations).
+func (c *Collector) Collect(ctx context.Context) error {
+	return c.collect(ctx)
+}
+
 func (c *Collector) collect(ctx context.Context) error {
 	backups, err := c.listBackups(ctx)
 	if err != nil {

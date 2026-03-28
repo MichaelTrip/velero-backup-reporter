@@ -28,6 +28,12 @@ const menuItems = computed(() => [
     class: route.path.startsWith('/backups') ? 'active-route' : '',
     command: () => router.push('/backups'),
   },
+  {
+    label: 'Report',
+    icon: 'pi pi-file-pdf',
+    class: route.path === '/report' ? 'active-route' : '',
+    command: () => router.push('/report'),
+  },
 ])
 </script>
 

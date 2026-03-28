@@ -51,8 +51,9 @@ func TestValidate_EmailDisabledWhenSMTPIncomplete(t *testing.T) {
 		Port:               8080,
 		CollectionInterval: 5 * time.Minute,
 		Email: EmailConfig{
-			Enabled:  true,
-			Schedule: "0 8 * * *",
+			Enabled:       true,
+			Schedule:      "0 8 * * *",
+			DetailsWindow: 24 * time.Hour,
 		},
 		SMTP: SMTPConfig{
 			Host: "",
@@ -73,8 +74,9 @@ func TestValidate_EmailEnabledWithCompleteSMTP(t *testing.T) {
 		Port:               8080,
 		CollectionInterval: 5 * time.Minute,
 		Email: EmailConfig{
-			Enabled:  true,
-			Schedule: "0 8 * * *",
+			Enabled:       true,
+			Schedule:      "0 8 * * *",
+			DetailsWindow: 24 * time.Hour,
 		},
 		SMTP: SMTPConfig{
 			Host: "smtp.example.com",
@@ -109,6 +111,9 @@ func TestLoad_Defaults(t *testing.T) {
 	if cfg.Email.Schedule != "0 8 * * *" {
 		t.Errorf("expected default email schedule, got '%s'", cfg.Email.Schedule)
 	}
+	if cfg.Email.DetailsWindow != 24*time.Hour {
+		t.Errorf("expected default email details window 24h, got %v", cfg.Email.DetailsWindow)
+	}
 }
 
 func TestLoad_FromConfigFile(t *testing.T) {
@@ -131,5 +136,27 @@ func TestLoad_FromConfigFile(t *testing.T) {
 	}
 	if cfg.Port != 9090 {
 		t.Errorf("expected port 9090, got %d", cfg.Port)
+	}
+}
+
+func TestValidate_InvalidEmailDetailsWindow(t *testing.T) {
+	cfg := &Config{
+		Port:               8080,
+		CollectionInterval: 5 * time.Minute,
+		Email: EmailConfig{
+			Enabled:       true,
+			Schedule:      "0 8 * * *",
+			DetailsWindow: 0,
+		},
+		SMTP: SMTPConfig{
+			Host: "smtp.example.com",
+			Port: 587,
+			From: "test@example.com",
+			To:   []string{"admin@example.com"},
+		},
+	}
+
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected error for non-positive email-details-window")
 	}
 }

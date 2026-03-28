@@ -21,7 +21,8 @@ func TestNewSender(t *testing.T) {
 		To:   []string{"admin@example.com"},
 	}
 
-	sender, err := NewSender(cfg)
+	sender, err := NewSender(cfg, config.EmailConfig{DetailsWindow: 24 * time.Hour})
+
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -63,7 +64,7 @@ func TestEmailTemplateRendering(t *testing.T) {
 		To:   []string{"admin@example.com"},
 	}
 
-	sender, err := NewSender(cfg)
+	sender, err := NewSender(cfg, config.EmailConfig{DetailsWindow: 24 * time.Hour})
 	if err != nil {
 		t.Fatalf("creating sender: %v", err)
 	}
@@ -71,30 +72,30 @@ func TestEmailTemplateRendering(t *testing.T) {
 	rpt := report.BackupReport{
 		GeneratedAt: time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC),
 		Summary: report.BackupSummary{
-			TotalBackups:   5,
-			Completed:      3,
-			Failed:         1,
+			TotalBackups:    5,
+			Completed:       3,
+			Failed:          1,
 			PartiallyFailed: 1,
-			LastSuccessful: timePtr(time.Date(2024, 1, 15, 9, 0, 0, 0, time.UTC)),
-			LastFailed:     timePtr(time.Date(2024, 1, 14, 0, 0, 0, 0, time.UTC)),
+			LastSuccessful:  timePtr(time.Date(2024, 1, 15, 9, 0, 0, 0, time.UTC)),
+			LastFailed:      timePtr(time.Date(2024, 1, 14, 0, 0, 0, 0, time.UTC)),
 		},
 		ScheduleSummaries: []report.ScheduleSummary{
 			{
-				ScheduleName:     "daily",
-				LastBackupStatus: "Completed",
-				TotalBackups:     3,
+				ScheduleName:      "daily",
+				LastBackupStatus:  "Completed",
+				TotalBackups:      3,
 				SuccessfulBackups: 2,
-				SuccessRate:      66.7,
+				SuccessRate:       66.7,
 			},
 		},
 		Backups: []report.BackupDetail{
 			{
-				Name:   "backup-1",
-				Status: "Completed",
-				StartTime: timePtr(time.Date(2024, 1, 15, 9, 0, 0, 0, time.UTC)),
-				Duration: 5 * time.Minute,
+				Name:          "backup-1",
+				Status:        "Completed",
+				StartTime:     timePtr(time.Date(2024, 1, 15, 9, 0, 0, 0, time.UTC)),
+				Duration:      5 * time.Minute,
 				ItemsBackedUp: 100,
-				TotalItems: 100,
+				TotalItems:    100,
 			},
 		},
 	}
@@ -114,5 +115,62 @@ func TestEmailTemplateRendering(t *testing.T) {
 	}
 	if !strings.Contains(html, "backup-1") {
 		t.Error("expected backup name in output")
+	}
+}
+
+func TestNewSender_DefaultDetailsWindow(t *testing.T) {
+	cfg := config.SMTPConfig{
+		Host: "smtp.example.com",
+		Port: 587,
+		From: "test@example.com",
+		To:   []string{"admin@example.com"},
+	}
+
+	sender, err := NewSender(cfg, config.EmailConfig{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if sender.detailsWindow != 24*time.Hour {
+		t.Fatalf("expected default details window 24h, got %v", sender.detailsWindow)
+	}
+}
+
+func TestFilterBackupDetailsWithinWindow(t *testing.T) {
+	now := time.Date(2026, 3, 28, 12, 0, 0, 0, time.UTC)
+	inside := now.Add(-23 * time.Hour)
+	outside := now.Add(-25 * time.Hour)
+
+	backups := []report.BackupDetail{
+		{Name: "inside", StartTime: timePtr(inside)},
+		{Name: "outside", StartTime: timePtr(outside)},
+	}
+
+	filtered := filterBackupDetailsWithinWindow(backups, now, 24*time.Hour)
+
+	if len(filtered) != 1 {
+		t.Fatalf("expected 1 backup in window, got %d", len(filtered))
+	}
+	if filtered[0].Name != "inside" {
+		t.Fatalf("expected backup 'inside', got %q", filtered[0].Name)
+	}
+}
+
+func TestFilterBackupDetailsWithinWindow_UsesCompletionWhenStartMissing(t *testing.T) {
+	now := time.Date(2026, 3, 28, 12, 0, 0, 0, time.UTC)
+	completion := now.Add(-2 * time.Hour)
+
+	backups := []report.BackupDetail{
+		{Name: "completion-only", CompletionTime: timePtr(completion)},
+		{Name: "missing-times"},
+	}
+
+	filtered := filterBackupDetailsWithinWindow(backups, now, 24*time.Hour)
+
+	if len(filtered) != 1 {
+		t.Fatalf("expected 1 backup in window, got %d", len(filtered))
+	}
+	if filtered[0].Name != "completion-only" {
+		t.Fatalf("expected backup 'completion-only', got %q", filtered[0].Name)
 	}
 }

@@ -48,6 +48,7 @@ Configuration can be provided via CLI flags, environment variables, or a YAML co
 | `--collection-interval` | `COLLECTION_INTERVAL` | `5m` | Data collection interval |
 | `--email-enabled` | `EMAIL_ENABLED` | `false` | Enable email notifications |
 | `--email-schedule` | `EMAIL_SCHEDULE` | `0 8 * * *` | Cron schedule for email reports |
+| `--email-details-window` | `EMAIL_DETAILS_WINDOW` | `24h` | Time window for backups shown in email report details |
 | `--smtp-host` | `SMTP_HOST` | - | SMTP server host |
 | `--smtp-port` | `SMTP_PORT` | `587` | SMTP server port |
 | `--smtp-username` | `SMTP_USERNAME` | - | SMTP username |
@@ -64,6 +65,7 @@ port: 8080
 collection-interval: 10m
 email-enabled: true
 email-schedule: "0 8 * * 1-5"
+email-details-window: 24h
 smtp-host: smtp.example.com
 smtp-port: 587
 smtp-username: user@example.com

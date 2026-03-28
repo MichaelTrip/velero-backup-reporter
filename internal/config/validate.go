@@ -15,6 +15,10 @@ func (c *Config) Validate() error {
 	}
 
 	if c.Email.Enabled {
+		if c.Email.DetailsWindow <= 0 {
+			return fmt.Errorf("email-details-window must be positive")
+		}
+
 		if c.SMTP.Host == "" {
 			log.Println("WARN: email enabled but smtp-host not set, disabling email")
 			c.Email.Enabled = false

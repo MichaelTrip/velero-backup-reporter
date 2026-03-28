@@ -1,6 +1,7 @@
 package report
 
 import (
+	"sort"
 	"time"
 
 	"github.com/michael/velero-backup-reporter/internal/collector"
@@ -8,33 +9,45 @@ import (
 
 // BackupReport is the full report containing summary and details.
 type BackupReport struct {
-	GeneratedAt      time.Time
-	Summary          BackupSummary
+	GeneratedAt       time.Time
+	Summary           BackupSummary
 	ScheduleSummaries []ScheduleSummary
-	Backups          []BackupDetail
+	Backups           []BackupDetail
+	PeriodSummaries   map[string]BackupPeriodSummary
 }
 
 // BackupSummary contains aggregate stats across all backups.
 type BackupSummary struct {
-	TotalBackups      int
-	Completed         int
-	Failed            int
-	PartiallyFailed   int
-	InProgress        int
-	Deleting          int
-	Other             int
-	LastSuccessful    *time.Time
-	LastFailed        *time.Time
+	TotalBackups    int
+	Completed       int
+	Failed          int
+	PartiallyFailed int
+	InProgress      int
+	Deleting        int
+	Other           int
+	LastSuccessful  *time.Time
+	LastFailed      *time.Time
+}
+
+// BackupPeriodSummary contains statistics for a time period.
+type BackupPeriodSummary struct {
+	Period          string
+	TotalBackups    int
+	Completed       int
+	Failed          int
+	PartiallyFailed int
+	AverageDuration time.Duration
+	TotalItems      int
 }
 
 // ScheduleSummary contains per-schedule statistics.
 type ScheduleSummary struct {
-	ScheduleName     string
-	LastBackupStatus string
-	LastBackupTime   *time.Time
-	TotalBackups     int
+	ScheduleName      string
+	LastBackupStatus  string
+	LastBackupTime    *time.Time
+	TotalBackups      int
 	SuccessfulBackups int
-	SuccessRate      float64
+	SuccessRate       float64
 }
 
 // BackupDetail contains information about a single backup.
@@ -60,6 +73,7 @@ func Generate(backups []collector.BackupInfo, schedules []collector.ScheduleInfo
 	report.Summary = generateSummary(backups)
 	report.Backups = generateDetails(backups)
 	report.ScheduleSummaries = generateScheduleSummaries(backups, schedules)
+	report.PeriodSummaries = generatePeriodSummaries(backups)
 
 	return report
 }
@@ -118,6 +132,18 @@ func generateDetails(backups []collector.BackupInfo) []BackupDetail {
 		details = append(details, detail)
 	}
 
+	// Sort by timestamp (newest first)
+	sort.Slice(details, func(i, j int) bool {
+		// Handle nil timestamps
+		if details[i].StartTime == nil {
+			return false
+		}
+		if details[j].StartTime == nil {
+			return true
+		}
+		return details[i].StartTime.After(*details[j].StartTime)
+	})
+
 	return details
 }
 
@@ -148,8 +174,8 @@ func generateScheduleSummaries(backups []collector.BackupInfo, schedules []colle
 	summaries := make([]ScheduleSummary, 0, len(bySchedule))
 	for name, sBackups := range bySchedule {
 		s := ScheduleSummary{
-			ScheduleName:  name,
-			TotalBackups:  len(sBackups),
+			ScheduleName: name,
+			TotalBackups: len(sBackups),
 		}
 
 		var lastTime *time.Time
@@ -169,6 +195,66 @@ func generateScheduleSummaries(backups []collector.BackupInfo, schedules []colle
 		}
 
 		summaries = append(summaries, s)
+	}
+
+	return summaries
+}
+
+// generatePeriodSummaries creates summary statistics for different time periods.
+func generatePeriodSummaries(backups []collector.BackupInfo) map[string]BackupPeriodSummary {
+	now := time.Now()
+	periods := map[string]time.Time{
+		"Last 24 Hours": now.Add(-24 * time.Hour),
+		"Last 7 Days":   now.Add(-7 * 24 * time.Hour),
+		"Last 30 Days":  now.Add(-30 * 24 * time.Hour),
+	}
+
+	summaries := make(map[string]BackupPeriodSummary)
+
+	for periodName, startTime := range periods {
+		period := BackupPeriodSummary{
+			Period: periodName,
+		}
+
+		durations := []time.Duration{}
+
+		for _, b := range backups {
+			// Check if backup completed within the period
+			completionTime := b.CompletionTimestamp
+			if completionTime == nil {
+				completionTime = b.StartTimestamp
+			}
+
+			if completionTime != nil && completionTime.After(startTime) {
+				period.TotalBackups++
+				period.TotalItems += b.TotalItems
+
+				switch b.Phase {
+				case "Completed":
+					period.Completed++
+				case "Failed":
+					period.Failed++
+				case "PartiallyFailed":
+					period.PartiallyFailed++
+				}
+
+				// Track duration for average calculation
+				if b.StartTimestamp != nil && b.CompletionTimestamp != nil {
+					durations = append(durations, b.CompletionTimestamp.Sub(*b.StartTimestamp))
+				}
+			}
+		}
+
+		// Calculate average duration
+		if len(durations) > 0 {
+			totalDuration := time.Duration(0)
+			for _, d := range durations {
+				totalDuration += d
+			}
+			period.AverageDuration = totalDuration / time.Duration(len(durations))
+		}
+
+		summaries[periodName] = period
 	}
 
 	return summaries
