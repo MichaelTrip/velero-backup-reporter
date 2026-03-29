@@ -267,6 +267,77 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+  # Package and publish Helm chart to GHCR OCI registry
+  publish-helm-chart:
+    runs-on: ubuntu-latest
+    needs: [determine-tag, build-container]
+    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
+    permissions:
+      contents: write
+      packages: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+
+      - name: Sync chart version with application tag
+        run: |
+          APP_TAG="${{ needs.determine-tag.outputs.docker-tag }}"
+          echo "🔖 Setting chart version and appVersion to: ${APP_TAG}"
+
+          sed -i "s/^version:.*/version: ${APP_TAG}/" charts/velero-backup-reporter/Chart.yaml
+          sed -i "s/^appVersion:.*/appVersion: \"${APP_TAG}\"/" charts/velero-backup-reporter/Chart.yaml
+
+          echo "Updated Chart.yaml:"
+          grep -E "^(version|appVersion):" charts/velero-backup-reporter/Chart.yaml
+
+      - name: Commit chart version update
+        run: |
+          if git diff --quiet charts/velero-backup-reporter/Chart.yaml; then
+            echo "Chart.yaml already has the expected version"
+            exit 0
+          fi
+
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+          git add charts/velero-backup-reporter/Chart.yaml
+          git commit -m "chore(helm): sync chart version to ${{ needs.determine-tag.outputs.docker-tag }} [skip ci]
+
+          Auto-generated from workflow run: ${{ github.run_id }}"
+          git push origin main
+
+      - name: Log in to GHCR for Helm push
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ${{ env.REGISTRY }} \
+            --username "${{ github.actor }}" \
+            --password-stdin
+
+      - name: Package Helm chart
+        run: |
+          mkdir -p .helm-packages
+          helm package charts/velero-backup-reporter --destination .helm-packages
+
+      - name: Publish Helm chart to OCI repo
+        run: |
+          helm push .helm-packages/velero-backup-reporter-${{ needs.determine-tag.outputs.docker-tag }}.tgz \
+            oci://${{ env.REGISTRY }}/${{ github.repository_owner }}/charts
+
+      - name: Add Helm publish summary
+        run: |
+          echo "## ⛵ Helm Chart Published" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Chart:** \\`velero-backup-reporter\\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Version:** \\`${{ needs.determine-tag.outputs.docker-tag }}\\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Registry:** \\`${{ env.REGISTRY }}/${{ github.repository_owner }}/charts\\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "\\`\\`\\`bash" >> $GITHUB_STEP_SUMMARY
+          echo "helm pull oci://${{ env.REGISTRY }}/${{ github.repository_owner }}/charts/velero-backup-reporter --version ${{ needs.determine-tag.outputs.docker-tag }}" >> $GITHUB_STEP_SUMMARY
+          echo "\\`\\`\\`" >> $GITHUB_STEP_SUMMARY
+
   # Update deployment manifest with latest image tag on main
   update-deployment:
     runs-on: ubuntu-latest
@@ -298,7 +369,7 @@ jobs:
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           git add deploy/manifests.yaml
-          git commit -m "chore: update deployment image to ${{ needs.determine-tag.outputs.docker-tag }}
+          git commit -m "chore: update deployment image to ${{ needs.determine-tag.outputs.docker-tag }} [skip ci]
 
           Auto-generated from workflow run: ${{ github.run_id }}"
           git push origin main
