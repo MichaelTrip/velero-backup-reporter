@@ -304,14 +304,14 @@ jobs:
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
 
-          # Avoid non-fast-forward failures when another job updates main first.
-          git fetch origin main
-          git rebase origin/main
-
           git add charts/velero-backup-reporter/Chart.yaml
           git commit -m "chore(helm): sync chart version to ${{ needs.determine-tag.outputs.docker-tag }} [skip ci]
 
           Auto-generated from workflow run: ${{ github.run_id }}"
+
+          # Avoid non-fast-forward failures when another job updates main first.
+          git fetch origin main
+          git rebase origin/main
 
           for i in 1 2 3; do
             if git push origin HEAD:main; then
