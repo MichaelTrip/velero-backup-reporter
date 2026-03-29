@@ -380,7 +380,7 @@ jobs:
           NEW_IMAGE="ghcr.io/${{ env.IMAGE_NAME }}:${{ needs.determine-tag.outputs.docker-tag }}"
           sed -i "s|image: .*velero-backup-reporter:.*|image: ${NEW_IMAGE}|g" deploy/manifests.yaml
 
-          if git diff --quiet; then
+          if git diff --quiet deploy/manifests.yaml; then
             echo "✅ Deployment file is already up to date"
             exit 0
           fi
@@ -389,12 +389,13 @@ jobs:
 
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git fetch origin main
-          git rebase origin/main
           git add deploy/manifests.yaml
           git commit -m "chore: update deployment image to ${{ needs.determine-tag.outputs.docker-tag }} [skip ci]
 
           Auto-generated from workflow run: ${{ github.run_id }}"
+
+          git fetch origin main
+          git rebase origin/main
 
           for i in 1 2 3; do
             if git push origin HEAD:main; then
