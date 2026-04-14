@@ -150,6 +150,7 @@ type backupSummaryJSON struct {
 	Completed       int        `json:"completed"`
 	Failed          int        `json:"failed"`
 	PartiallyFailed int        `json:"partiallyFailed"`
+	NotStarted      int        `json:"notStarted"`
 	InProgress      int        `json:"inProgress"`
 	Deleting        int        `json:"deleting"`
 	LastSuccessful  *time.Time `json:"lastSuccessful"`
@@ -260,6 +261,7 @@ func (s *Server) handleAPIDashboard(w http.ResponseWriter, r *http.Request) {
 			Completed:       rpt.Summary.Completed,
 			Failed:          rpt.Summary.Failed,
 			PartiallyFailed: rpt.Summary.PartiallyFailed,
+			NotStarted:      rpt.Summary.NotStarted,
 			InProgress:      rpt.Summary.InProgress,
 			Deleting:        rpt.Summary.Deleting,
 			LastSuccessful:  rpt.Summary.LastSuccessful,
@@ -350,6 +352,7 @@ func (s *Server) handleAPIReport(w http.ResponseWriter, r *http.Request) {
 			Completed:       rpt.Summary.Completed,
 			Failed:          rpt.Summary.Failed,
 			PartiallyFailed: rpt.Summary.PartiallyFailed,
+			NotStarted:      rpt.Summary.NotStarted,
 			InProgress:      rpt.Summary.InProgress,
 			Deleting:        rpt.Summary.Deleting,
 			LastSuccessful:  rpt.Summary.LastSuccessful,

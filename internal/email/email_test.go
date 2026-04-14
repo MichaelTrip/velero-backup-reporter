@@ -76,6 +76,7 @@ func TestEmailTemplateRendering(t *testing.T) {
 			Completed:       3,
 			Failed:          1,
 			PartiallyFailed: 1,
+			NotStarted:      1,
 			LastSuccessful:  timePtr(time.Date(2024, 1, 15, 9, 0, 0, 0, time.UTC)),
 			LastFailed:      timePtr(time.Date(2024, 1, 14, 0, 0, 0, 0, time.UTC)),
 		},
@@ -90,12 +91,14 @@ func TestEmailTemplateRendering(t *testing.T) {
 		},
 		Backups: []report.BackupDetail{
 			{
-				Name:          "backup-1",
-				Status:        "Completed",
-				StartTime:     timePtr(time.Date(2024, 1, 15, 9, 0, 0, 0, time.UTC)),
-				Duration:      5 * time.Minute,
-				ItemsBackedUp: 100,
-				TotalItems:    100,
+				Name:             "backup-1",
+				Status:           "Failed",
+				StartTime:        timePtr(time.Date(2024, 1, 15, 9, 0, 0, 0, time.UTC)),
+				Duration:         5 * time.Minute,
+				ItemsBackedUp:    100,
+				TotalItems:       100,
+				FailureReason:    "plugin error",
+				ValidationErrors: []string{"invalid include resource"},
 			},
 		},
 	}
@@ -115,6 +118,15 @@ func TestEmailTemplateRendering(t *testing.T) {
 	}
 	if !strings.Contains(html, "backup-1") {
 		t.Error("expected backup name in output")
+	}
+	if !strings.Contains(html, "plugin error") {
+		t.Error("expected failure reason in output")
+	}
+	if !strings.Contains(html, "invalid include resource") {
+		t.Error("expected validation errors in output")
+	}
+	if !strings.Contains(html, "Not Started") {
+		t.Error("expected not started summary label in output")
 	}
 }
 
@@ -172,5 +184,23 @@ func TestFilterBackupDetailsWithinWindow_UsesCompletionWhenStartMissing(t *testi
 	}
 	if filtered[0].Name != "completion-only" {
 		t.Fatalf("expected backup 'completion-only', got %q", filtered[0].Name)
+	}
+}
+
+func TestFilterBackupDetailsWithinWindow_IncludesNotStartedWithoutTimestamps(t *testing.T) {
+	now := time.Date(2026, 3, 28, 12, 0, 0, 0, time.UTC)
+
+	backups := []report.BackupDetail{
+		{Name: "not-started", Status: "FailedValidation"},
+		{Name: "missing-times", Status: "InProgress"},
+	}
+
+	filtered := filterBackupDetailsWithinWindow(backups, now, 24*time.Hour)
+
+	if len(filtered) != 1 {
+		t.Fatalf("expected 1 backup in window, got %d", len(filtered))
+	}
+	if filtered[0].Name != "not-started" {
+		t.Fatalf("expected backup 'not-started', got %q", filtered[0].Name)
 	}
 }
