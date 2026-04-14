@@ -51,6 +51,8 @@ func NewSender(cfg config.SMTPConfig, emailCfg config.EmailConfig) (*Sender, err
 				return "#22c55e"
 			case "Failed":
 				return "#ef4444"
+			case "Missed":
+				return "#ef4444"
 			case "PartiallyFailed":
 				return "#f59e0b"
 			case "InProgress":
@@ -186,7 +188,7 @@ func filterBackupDetailsWithinWindow(backups []report.BackupDetail, now time.Tim
 
 func isNotStartedStatus(status string) bool {
 	switch status {
-	case "New", "Queued", "ReadyToStart", "FailedValidation":
+	case "New", "Queued", "ReadyToStart", "FailedValidation", "Missed":
 		return true
 	default:
 		return false

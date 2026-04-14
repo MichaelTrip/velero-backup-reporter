@@ -126,7 +126,7 @@ func TestGenerateScheduleSummaries(t *testing.T) {
 		{Name: "weekly"}, // no backups
 	}
 
-	summaries := generateScheduleSummaries(backups, schedules)
+	summaries := generateScheduleSummaries(backups, schedules, map[string]bool{})
 
 	byName := make(map[string]ScheduleSummary)
 	for _, s := range summaries {
@@ -175,5 +175,45 @@ func TestGenerate_ReportTimestamp(t *testing.T) {
 
 	if report.GeneratedAt.Before(before) || report.GeneratedAt.After(after) {
 		t.Error("expected report timestamp to be between before and after")
+	}
+}
+
+func TestGenerateMissedScheduleDetails(t *testing.T) {
+	now := time.Date(2026, 4, 14, 10, 58, 44, 0, time.UTC)
+	lastRun := time.Date(2026, 4, 12, 5, 0, 0, 0, time.UTC)
+
+	schedules := []collector.ScheduleInfo{
+		{Name: "immich", Schedule: "0 5 * * *", LastBackupTime: &lastRun},
+	}
+
+	missed, bySchedule := generateMissedScheduleDetails(nil, schedules, now)
+
+	if !bySchedule["immich"] {
+		t.Fatal("expected immich schedule to be flagged as missed")
+	}
+	if len(missed) != 1 {
+		t.Fatalf("expected 1 recent missed run, got %d", len(missed))
+	}
+	if missed[0].Status != "Missed" {
+		t.Fatalf("expected status Missed, got %s", missed[0].Status)
+	}
+	if missed[0].FailureReason == "" {
+		t.Fatal("expected failure reason for missed run")
+	}
+}
+
+func TestGenerateScheduleSummaries_MarkedMissed(t *testing.T) {
+	now := time.Now()
+	backups := []collector.BackupInfo{
+		{Name: "s1-1", ScheduleName: "daily", Phase: "Completed", StartTimestamp: timePtr(now.Add(-2 * time.Hour))},
+	}
+	schedules := []collector.ScheduleInfo{{Name: "daily"}}
+
+	summaries := generateScheduleSummaries(backups, schedules, map[string]bool{"daily": true})
+	if len(summaries) == 0 {
+		t.Fatal("expected at least one summary")
+	}
+	if summaries[0].LastBackupStatus != "Missed" {
+		t.Fatalf("expected last backup status Missed, got %s", summaries[0].LastBackupStatus)
 	}
 }

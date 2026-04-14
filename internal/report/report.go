@@ -1,11 +1,13 @@
 package report
 
 import (
+	"fmt"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/michael/velero-backup-reporter/internal/collector"
+	"github.com/robfig/cron/v3"
 )
 
 // BackupReport is the full report containing summary and details.
@@ -76,7 +78,13 @@ func Generate(backups []collector.BackupInfo, schedules []collector.ScheduleInfo
 
 	report.Summary = generateSummary(backups)
 	report.Backups = generateDetails(backups)
-	report.ScheduleSummaries = generateScheduleSummaries(backups, schedules)
+
+	missedDetails, missedBySchedule := generateMissedScheduleDetails(backups, schedules, report.GeneratedAt)
+	report.Backups = append(report.Backups, missedDetails...)
+	sortBackupDetails(report.Backups)
+	report.Summary.NotStarted += len(missedDetails)
+
+	report.ScheduleSummaries = generateScheduleSummaries(backups, schedules, missedBySchedule)
 	report.PeriodSummaries = generatePeriodSummaries(backups)
 
 	return report
@@ -146,22 +154,35 @@ func generateDetails(backups []collector.BackupInfo) []BackupDetail {
 		details = append(details, detail)
 	}
 
-	// Sort by timestamp (newest first)
-	sort.Slice(details, func(i, j int) bool {
-		// Handle nil timestamps
-		if details[i].StartTime == nil {
-			return false
-		}
-		if details[j].StartTime == nil {
-			return true
-		}
-		return details[i].StartTime.After(*details[j].StartTime)
-	})
+	sortBackupDetails(details)
 
 	return details
 }
 
-func generateScheduleSummaries(backups []collector.BackupInfo, schedules []collector.ScheduleInfo) []ScheduleSummary {
+func sortBackupDetails(details []BackupDetail) {
+	// Sort by timestamp (newest first)
+	sort.Slice(details, func(i, j int) bool {
+		iTime := details[i].StartTime
+		if iTime == nil {
+			iTime = details[i].CompletionTime
+		}
+		jTime := details[j].StartTime
+		if jTime == nil {
+			jTime = details[j].CompletionTime
+		}
+
+		if iTime == nil {
+			return false
+		}
+		if jTime == nil {
+			return true
+		}
+
+		return iTime.After(*jTime)
+	})
+}
+
+func generateScheduleSummaries(backups []collector.BackupInfo, schedules []collector.ScheduleInfo, missedBySchedule map[string]bool) []ScheduleSummary {
 	// Group backups by schedule
 	bySchedule := make(map[string][]collector.BackupInfo)
 	for _, b := range backups {
@@ -170,12 +191,6 @@ func generateScheduleSummaries(backups []collector.BackupInfo, schedules []colle
 			name = "Unscheduled"
 		}
 		bySchedule[name] = append(bySchedule[name], b)
-	}
-
-	// Build schedule name set
-	scheduleNames := make(map[string]bool)
-	for _, s := range schedules {
-		scheduleNames[s.Name] = true
 	}
 
 	// Ensure all known schedules appear even if they have no backups
@@ -206,6 +221,10 @@ func generateScheduleSummaries(backups []collector.BackupInfo, schedules []colle
 
 		if s.TotalBackups > 0 {
 			s.SuccessRate = float64(s.SuccessfulBackups) / float64(s.TotalBackups) * 100
+		}
+
+		if missedBySchedule[name] {
+			s.LastBackupStatus = "Missed"
 		}
 
 		summaries = append(summaries, s)
@@ -276,6 +295,8 @@ func generatePeriodSummaries(backups []collector.BackupInfo) map[string]BackupPe
 
 type backupPhaseClass int
 
+const missedRunsLookback = 24 * time.Hour
+
 const (
 	phaseClassOther backupPhaseClass = iota
 	phaseClassCompleted
@@ -320,4 +341,103 @@ func backupDidNotStart(b collector.BackupInfo) bool {
 	default:
 		return false
 	}
+}
+
+func generateMissedScheduleDetails(backups []collector.BackupInfo, schedules []collector.ScheduleInfo, now time.Time) ([]BackupDetail, map[string]bool) {
+	missedDetails := []BackupDetail{}
+	missedBySchedule := make(map[string]bool)
+
+	backupsBySchedule := make(map[string][]collector.BackupInfo)
+	for _, b := range backups {
+		if b.ScheduleName == "" {
+			continue
+		}
+		backupsBySchedule[b.ScheduleName] = append(backupsBySchedule[b.ScheduleName], b)
+	}
+
+	for _, s := range schedules {
+		if s.Paused || s.Schedule == "" {
+			continue
+		}
+
+		anchor := scheduleAnchorTime(s, backupsBySchedule[s.Name])
+		if anchor == nil {
+			continue
+		}
+
+		missedRuns, err := missedRunTimes(s.Schedule, *anchor, now)
+		if err != nil || len(missedRuns) == 0 {
+			continue
+		}
+
+		hasRecentMissed := false
+		for _, run := range missedRuns {
+			if run.Before(now.Add(-missedRunsLookback)) {
+				continue
+			}
+			hasRecentMissed = true
+			runTime := run
+			missedDetails = append(missedDetails, BackupDetail{
+				Name:           fmt.Sprintf("%s (missed)", s.Name),
+				ScheduleName:   s.Name,
+				Status:         "Missed",
+				StartTime:      &runTime,
+				FailureReason:  "Scheduled run did not create a backup",
+				ItemsBackedUp:  0,
+				TotalItems:     0,
+				Warnings:       0,
+				Errors:         0,
+				CompletionTime: nil,
+			})
+		}
+		if hasRecentMissed {
+			missedBySchedule[s.Name] = true
+		}
+	}
+
+	return missedDetails, missedBySchedule
+}
+
+func scheduleAnchorTime(s collector.ScheduleInfo, backups []collector.BackupInfo) *time.Time {
+	if s.LastBackupTime != nil {
+		return s.LastBackupTime
+	}
+
+	var latest *time.Time
+	for _, b := range backups {
+		ts := backupRelevantTimestamp(b)
+		if ts == nil {
+			continue
+		}
+		if latest == nil || ts.After(*latest) {
+			t := *ts
+			latest = &t
+		}
+	}
+
+	return latest
+}
+
+func missedRunTimes(scheduleExpr string, anchor, now time.Time) ([]time.Time, error) {
+	parser := cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow | cron.Descriptor)
+	spec, err := parser.Parse(scheduleExpr)
+	if err != nil {
+		return nil, err
+	}
+
+	next := spec.Next(anchor)
+	if next.After(now) {
+		return nil, nil
+	}
+
+	runs := make([]time.Time, 0, 4)
+	for !next.After(now) {
+		runs = append(runs, next)
+		if len(runs) >= 32 {
+			break
+		}
+		next = spec.Next(next)
+	}
+
+	return runs, nil
 }
