@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/michael/velero-backup-reporter/internal/collector"
+	"github.com/michael/velero-backup-reporter/internal/report"
 )
 
 func TestGenerateBackupReport(t *testing.T) {
@@ -83,5 +84,34 @@ func TestGenerateBackupReport_MinimalBackup(t *testing.T) {
 	}
 	if len(data) == 0 {
 		t.Fatal("expected non-empty PDF output")
+	}
+}
+
+func TestGenerateWindowReport(t *testing.T) {
+	now := time.Now().UTC()
+	rpt := report.BackupReport{
+		GeneratedAt: now,
+		Summary: report.BackupSummary{
+			TotalBackups:    2,
+			Completed:       1,
+			Failed:          1,
+			PartiallyFailed: 0,
+			NotStarted:      0,
+		},
+		Backups: []report.BackupDetail{
+			{Name: "daily-1", Status: "Completed", StartTime: &now, ItemsBackedUp: 100, TotalItems: 100},
+			{Name: "daily-2", Status: "Failed", StartTime: &now, FailureReason: "test error"},
+		},
+	}
+
+	data, err := GenerateWindowReport(rpt, "Last 24 Hours")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(data) == 0 {
+		t.Fatal("expected non-empty PDF output")
+	}
+	if string(data[:4]) != "%PDF" {
+		t.Errorf("expected PDF header, got %q", string(data[:4]))
 	}
 }

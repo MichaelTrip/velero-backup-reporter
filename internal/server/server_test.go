@@ -333,6 +333,73 @@ func TestAPIDashboard_EmptyData(t *testing.T) {
 	}
 }
 
+func TestAPIReport_WithHoursFilter(t *testing.T) {
+	c := mockCollector()
+	srv, err := New(c)
+	if err != nil {
+		t.Fatalf("creating server: %v", err)
+	}
+
+	// Dataset is in early 2024, so last 1h should produce no timestamped backups.
+	req := httptest.NewRequest("GET", "/api/v1/report?hours=1", nil)
+	w := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d", w.Code)
+	}
+
+	var resp reportResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decoding response: %v", err)
+	}
+
+	if len(resp.Backups) != 0 {
+		t.Fatalf("expected 0 backups in last hour, got %d", len(resp.Backups))
+	}
+}
+
+func TestAPIReportPDF_Found(t *testing.T) {
+	c := mockCollector()
+	srv, err := New(c)
+	if err != nil {
+		t.Fatalf("creating server: %v", err)
+	}
+
+	req := httptest.NewRequest("GET", "/api/v1/report/pdf?hours=24", nil)
+	w := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d", w.Code)
+	}
+
+	ct := w.Header().Get("Content-Type")
+	if ct != "application/pdf" {
+		t.Errorf("expected Content-Type application/pdf, got %s", ct)
+	}
+
+	if w.Body.Len() == 0 {
+		t.Error("expected non-empty PDF body")
+	}
+}
+
+func TestAPIReportPDF_InvalidHours(t *testing.T) {
+	c := mockCollector()
+	srv, err := New(c)
+	if err != nil {
+		t.Fatalf("creating server: %v", err)
+	}
+
+	req := httptest.NewRequest("GET", "/api/v1/report/pdf?hours=0", nil)
+	w := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d", w.Code)
+	}
+}
+
 func TestAPIBackups_EmptyData(t *testing.T) {
 	c := collector.New(nil, "velero", 5*time.Minute)
 	c.SetData(nil, nil)

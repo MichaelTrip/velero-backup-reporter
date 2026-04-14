@@ -51,6 +51,8 @@ func NewSender(cfg config.SMTPConfig, emailCfg config.EmailConfig) (*Sender, err
 				return "#22c55e"
 			case "Failed":
 				return "#ef4444"
+			case "Missed":
+				return "#ef4444"
 			case "PartiallyFailed":
 				return "#f59e0b"
 			case "InProgress":
@@ -186,7 +188,7 @@ func filterBackupDetailsWithinWindow(backups []report.BackupDetail, now time.Tim
 
 func isNotStartedStatus(status string) bool {
 	switch status {
-	case "New", "Queued", "ReadyToStart", "FailedValidation":
+	case "New", "Queued", "ReadyToStart", "FailedValidation", "Missed":
 		return true
 	default:
 		return false
@@ -208,103 +210,104 @@ func buildMessage(from string, to []string, subject, htmlBody string) string {
 const emailTemplate = `<!DOCTYPE html>
 <html>
 <head><meta charset="UTF-8"></head>
-<body style="margin: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f7fa; padding: 20px 12px; color: #111827;">
-<div style="max-width: 700px; margin: 0 auto; background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
+<body style="margin: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #eaf2ff; padding: 20px 12px; color: #0f172a;">
+<div style="max-width: 700px; margin: 0 auto; background: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 8px 24px rgba(15,23,42,0.12); border: 1px solid #dbeafe;">
 
-<div style="background: #1a2332; color: #fff; padding: 20px 24px;">
-    <h1 style="margin: 0; font-size: 20px;">Velero Backup Report</h1>
-    <p style="margin: 4px 0 0; color: #a0b4cc; font-size: 14px;">Generated at {{formatTimeVal .GeneratedAt}}</p>
+<div style="background: #0f172a; background-image: linear-gradient(120deg, #0f172a 0%, #1d4ed8 55%, #0ea5e9 100%); color: #fff; padding: 22px 24px;">
+	<h1 style="margin: 0; font-size: 20px; letter-spacing: 0.2px;">Velero Backup Report</h1>
+	<p style="margin: 6px 0 0; color: #dbeafe; font-size: 14px;">Generated at {{formatTimeVal .GeneratedAt}}</p>
 </div>
+<div style="height: 6px; background: #f59e0b;"></div>
 
 <div style="padding: 24px;">
-    <h2 style="margin: 0 0 16px; font-size: 16px; color: #333;">Summary</h2>
-    <table style="width: 100%; border-collapse: collapse; margin-bottom: 24px;">
+	<h2 style="margin: 0 0 12px; font-size: 16px; color: #1d4ed8;">Summary</h2>
+	<table style="width: 100%; border-collapse: collapse; margin-bottom: 24px; background: #f8fbff; border: 1px solid #dbeafe;">
         <tr>
-            <td style="padding: 8px 12px; background: #f8f9fb; border: 1px solid #eee;"><strong>Total Backups</strong></td>
-            <td style="padding: 8px 12px; border: 1px solid #eee;">{{.Summary.TotalBackups}}</td>
-            <td style="padding: 8px 12px; background: #f8f9fb; border: 1px solid #eee;"><strong>Completed</strong></td>
-            <td style="padding: 8px 12px; border: 1px solid #eee; color: #166534;">{{.Summary.Completed}}</td>
+			<td style="padding: 8px 12px; background: #e0e7ff; border: 1px solid #dbeafe;"><strong>Total Backups</strong></td>
+			<td style="padding: 8px 12px; border: 1px solid #dbeafe;">{{.Summary.TotalBackups}}</td>
+			<td style="padding: 8px 12px; background: #dcfce7; border: 1px solid #dbeafe;"><strong>Completed</strong></td>
+			<td style="padding: 8px 12px; border: 1px solid #dbeafe; color: #166534; font-weight: 600;">{{.Summary.Completed}}</td>
         </tr>
         <tr>
-            <td style="padding: 8px 12px; background: #f8f9fb; border: 1px solid #eee;"><strong>Failed</strong></td>
-            <td style="padding: 8px 12px; border: 1px solid #eee; color: #991b1b;">{{.Summary.Failed}}</td>
-            <td style="padding: 8px 12px; background: #f8f9fb; border: 1px solid #eee;"><strong>Partially Failed</strong></td>
-            <td style="padding: 8px 12px; border: 1px solid #eee; color: #92400e;">{{.Summary.PartiallyFailed}}</td>
+			<td style="padding: 8px 12px; background: #fee2e2; border: 1px solid #dbeafe;"><strong>Failed</strong></td>
+			<td style="padding: 8px 12px; border: 1px solid #dbeafe; color: #991b1b; font-weight: 600;">{{.Summary.Failed}}</td>
+			<td style="padding: 8px 12px; background: #fef3c7; border: 1px solid #dbeafe;"><strong>Partially Failed</strong></td>
+			<td style="padding: 8px 12px; border: 1px solid #dbeafe; color: #92400e; font-weight: 600;">{{.Summary.PartiallyFailed}}</td>
         </tr>
 		<tr>
-			<td style="padding: 8px 12px; background: #f8f9fb; border: 1px solid #eee;"><strong>Not Started</strong></td>
-			<td style="padding: 8px 12px; border: 1px solid #eee; color: #1d4ed8;">{{.Summary.NotStarted}}</td>
-			<td style="padding: 8px 12px; background: #f8f9fb; border: 1px solid #eee;"><strong></strong></td>
-			<td style="padding: 8px 12px; border: 1px solid #eee;"></td>
+			<td style="padding: 8px 12px; background: #fee2e2; border: 1px solid #dbeafe;"><strong>Missing / Not Started</strong></td>
+			<td style="padding: 8px 12px; border: 1px solid #dbeafe; color: #991b1b; font-weight: 600;">{{.Summary.NotStarted}}</td>
+			<td style="padding: 8px 12px; background: #f3f4f6; border: 1px solid #dbeafe;"><strong></strong></td>
+			<td style="padding: 8px 12px; border: 1px solid #dbeafe;"></td>
 		</tr>
         <tr>
-            <td style="padding: 8px 12px; background: #f8f9fb; border: 1px solid #eee;"><strong>Last Successful</strong></td>
-            <td style="padding: 8px 12px; border: 1px solid #eee;" colspan="3">{{formatTime .Summary.LastSuccessful}}</td>
+			<td style="padding: 8px 12px; background: #ecfeff; border: 1px solid #dbeafe;"><strong>Last Successful</strong></td>
+			<td style="padding: 8px 12px; border: 1px solid #dbeafe;" colspan="3">{{formatTime .Summary.LastSuccessful}}</td>
         </tr>
         <tr>
-            <td style="padding: 8px 12px; background: #f8f9fb; border: 1px solid #eee;"><strong>Last Failed</strong></td>
-            <td style="padding: 8px 12px; border: 1px solid #eee;" colspan="3">{{formatTime .Summary.LastFailed}}</td>
+			<td style="padding: 8px 12px; background: #fef2f2; border: 1px solid #dbeafe;"><strong>Last Failed</strong></td>
+			<td style="padding: 8px 12px; border: 1px solid #dbeafe;" colspan="3">{{formatTime .Summary.LastFailed}}</td>
         </tr>
     </table>
 
     {{if .ScheduleSummaries}}
-    <h2 style="margin: 0 0 16px; font-size: 16px; color: #333;">Schedules</h2>
-    <table style="width: 100%; border-collapse: collapse; margin-bottom: 24px;">
-        <tr style="background: #f0f2f5;">
-            <th style="padding: 8px 12px; text-align: left; border: 1px solid #eee;">Schedule</th>
-            <th style="padding: 8px 12px; text-align: left; border: 1px solid #eee;">Last Status</th>
-            <th style="padding: 8px 12px; text-align: left; border: 1px solid #eee;">Total</th>
-            <th style="padding: 8px 12px; text-align: left; border: 1px solid #eee;">Success Rate</th>
+	<h2 style="margin: 0 0 12px; font-size: 16px; color: #0f766e;">Schedules</h2>
+	<table style="width: 100%; border-collapse: collapse; margin-bottom: 24px; background: #f0fdfa; border: 1px solid #99f6e4;">
+		<tr style="background: #14b8a6; color: #ffffff;">
+			<th style="padding: 8px 12px; text-align: left; border: 1px solid #0d9488;">Schedule</th>
+			<th style="padding: 8px 12px; text-align: left; border: 1px solid #0d9488;">Last Status</th>
+			<th style="padding: 8px 12px; text-align: left; border: 1px solid #0d9488;">Total</th>
+			<th style="padding: 8px 12px; text-align: left; border: 1px solid #0d9488;">Success Rate</th>
         </tr>
         {{range .ScheduleSummaries}}
         <tr>
-            <td style="padding: 8px 12px; border: 1px solid #eee;">{{.ScheduleName}}</td>
-            <td style="padding: 8px 12px; border: 1px solid #eee; color: {{statusColor .LastBackupStatus}};">{{if .LastBackupStatus}}{{.LastBackupStatus}}{{else}}-{{end}}</td>
-            <td style="padding: 8px 12px; border: 1px solid #eee;">{{.TotalBackups}}</td>
-            <td style="padding: 8px 12px; border: 1px solid #eee;">{{formatRate .SuccessRate}}</td>
+			<td style="padding: 8px 12px; border: 1px solid #99f6e4;">{{.ScheduleName}}</td>
+			<td style="padding: 8px 12px; border: 1px solid #99f6e4; color: {{statusColor .LastBackupStatus}}; font-weight: 600;">{{if .LastBackupStatus}}{{.LastBackupStatus}}{{else}}-{{end}}</td>
+			<td style="padding: 8px 12px; border: 1px solid #99f6e4;">{{.TotalBackups}}</td>
+			<td style="padding: 8px 12px; border: 1px solid #99f6e4;">{{formatRate .SuccessRate}}</td>
         </tr>
         {{end}}
     </table>
     {{end}}
 
     {{if .Backups}}
-    <h2 style="margin: 0 0 16px; font-size: 16px; color: #333;">Backup Details (Last 24 Hours)</h2>
+	<h2 style="margin: 0 0 12px; font-size: 16px; color: #7c2d12;">Backup Details (Last 24 Hours)</h2>
 	{{range .Backups}}
-	<table style="width: 100%; border-collapse: collapse; margin-bottom: 12px; border: 1px solid #e5e7eb; border-radius: 8px; overflow: hidden;">
+	<table style="width: 100%; border-collapse: collapse; margin-bottom: 14px; border: 1px solid #fdba74; border-radius: 10px; overflow: hidden; background: #fff7ed;">
 		<tr>
-			<td style="padding: 12px; border: 1px solid #e5e7eb; vertical-align: top;">
+			<td style="padding: 12px; border: 1px solid #fed7aa; vertical-align: top;">
 				<div style="font-size: 14px; font-weight: 600; line-height: 1.4; word-break: break-word;">{{.Name}}</div>
 				{{if .ScheduleName}}
 				<div style="margin-top: 4px; font-size: 12px; color: #6b7280;">Schedule: {{.ScheduleName}}</div>
 				{{end}}
 			</td>
-			<td style="padding: 12px; border: 1px solid #e5e7eb; vertical-align: top; text-align: right; white-space: nowrap; color: {{statusColor .Status}}; font-size: 13px; font-weight: 600;">
+			<td style="padding: 12px; border: 1px solid #fed7aa; vertical-align: top; text-align: right; white-space: nowrap; color: {{statusColor .Status}}; font-size: 13px; font-weight: 700; background: #fff1e6;">
 				{{.Status}}
 			</td>
 		</tr>
 		<tr>
-			<td style="padding: 8px 12px; border: 1px solid #e5e7eb; background: #f8f9fb; font-size: 12px; font-weight: 600; color: #4b5563; width: 35%;">Started</td>
-			<td style="padding: 8px 12px; border: 1px solid #e5e7eb; font-size: 13px; line-height: 1.4;">{{formatTime .StartTime}}</td>
+			<td style="padding: 8px 12px; border: 1px solid #fed7aa; background: #ffedd5; font-size: 12px; font-weight: 600; color: #7c2d12; width: 35%;">Started</td>
+			<td style="padding: 8px 12px; border: 1px solid #fed7aa; font-size: 13px; line-height: 1.4;">{{formatTime .StartTime}}</td>
 		</tr>
 		<tr>
-			<td style="padding: 8px 12px; border: 1px solid #e5e7eb; background: #f8f9fb; font-size: 12px; font-weight: 600; color: #4b5563;">Duration</td>
-			<td style="padding: 8px 12px; border: 1px solid #e5e7eb; font-size: 13px;">{{formatDuration .Duration}}</td>
+			<td style="padding: 8px 12px; border: 1px solid #fed7aa; background: #ffedd5; font-size: 12px; font-weight: 600; color: #7c2d12;">Duration</td>
+			<td style="padding: 8px 12px; border: 1px solid #fed7aa; font-size: 13px;">{{formatDuration .Duration}}</td>
 		</tr>
 		<tr>
-			<td style="padding: 8px 12px; border: 1px solid #e5e7eb; background: #f8f9fb; font-size: 12px; font-weight: 600; color: #4b5563;">Items Backed Up</td>
-			<td style="padding: 8px 12px; border: 1px solid #e5e7eb; font-size: 13px;">{{.ItemsBackedUp}} / {{.TotalItems}}</td>
+			<td style="padding: 8px 12px; border: 1px solid #fed7aa; background: #ffedd5; font-size: 12px; font-weight: 600; color: #7c2d12;">Items Backed Up</td>
+			<td style="padding: 8px 12px; border: 1px solid #fed7aa; font-size: 13px;">{{.ItemsBackedUp}} / {{.TotalItems}}</td>
 		</tr>
 		<tr>
-			<td style="padding: 8px 12px; border: 1px solid #e5e7eb; background: #f8f9fb; font-size: 12px; font-weight: 600; color: #4b5563;">Warnings / Errors</td>
-			<td style="padding: 8px 12px; border: 1px solid #e5e7eb; font-size: 13px;">{{.Warnings}} / {{.Errors}}</td>
+			<td style="padding: 8px 12px; border: 1px solid #fed7aa; background: #ffedd5; font-size: 12px; font-weight: 600; color: #7c2d12;">Warnings / Errors</td>
+			<td style="padding: 8px 12px; border: 1px solid #fed7aa; font-size: 13px;">{{.Warnings}} / {{.Errors}}</td>
 		</tr>
 		<tr>
-			<td style="padding: 8px 12px; border: 1px solid #e5e7eb; background: #f8f9fb; font-size: 12px; font-weight: 600; color: #4b5563;">Failure Reason</td>
-			<td style="padding: 8px 12px; border: 1px solid #e5e7eb; font-size: 13px;">{{if .FailureReason}}{{.FailureReason}}{{else}}-{{end}}</td>
+			<td style="padding: 8px 12px; border: 1px solid #fed7aa; background: #ffedd5; font-size: 12px; font-weight: 600; color: #7c2d12;">Failure Reason</td>
+			<td style="padding: 8px 12px; border: 1px solid #fed7aa; font-size: 13px;">{{if .FailureReason}}{{.FailureReason}}{{else}}-{{end}}</td>
 		</tr>
 		<tr>
-			<td style="padding: 8px 12px; border: 1px solid #e5e7eb; background: #f8f9fb; font-size: 12px; font-weight: 600; color: #4b5563;">Validation Errors</td>
-			<td style="padding: 8px 12px; border: 1px solid #e5e7eb; font-size: 13px;">{{if .ValidationErrors}}{{range .ValidationErrors}}{{.}}<br>{{end}}{{else}}-{{end}}</td>
+			<td style="padding: 8px 12px; border: 1px solid #fed7aa; background: #ffedd5; font-size: 12px; font-weight: 600; color: #7c2d12;">Validation Errors</td>
+			<td style="padding: 8px 12px; border: 1px solid #fed7aa; font-size: 13px;">{{if .ValidationErrors}}{{range .ValidationErrors}}{{.}}<br>{{end}}{{else}}-{{end}}</td>
 		</tr>
 	</table>
 	{{end}}

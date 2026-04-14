@@ -5,6 +5,7 @@ import DataTable from 'primevue/datatable'
 import Column from 'primevue/column'
 import Tag from 'primevue/tag'
 import Select from 'primevue/select'
+import Button from 'primevue/button'
 import Skeleton from 'primevue/skeleton'
 import Message from 'primevue/message'
 import { statusSeverity, formatTime } from '../composables/useBackupUtils.js'
@@ -52,6 +53,14 @@ const filteredBackups = computed(() => {
 function goToDetail(name) {
   router.push({ name: 'backup-detail', params: { name } })
 }
+
+function openBackupReportPDF(name) {
+  window.open(`/api/v1/backups/${name}/pdf`, '_blank')
+}
+
+function openWindowReportPage() {
+  router.push({ name: 'report' })
+}
 </script>
 
 <template>
@@ -66,7 +75,15 @@ function goToDetail(name) {
 
   <!-- Content -->
   <div v-else>
-    <h2 style="margin-bottom: 1.5rem;">Backups</h2>
+    <div class="page-header">
+      <h2 style="margin: 0;">Backups</h2>
+      <Button
+        label="Create Backup Report"
+        icon="pi pi-chart-bar"
+        severity="primary"
+        @click="openWindowReportPage"
+      />
+    </div>
 
     <div class="filters">
       <Select
@@ -140,11 +157,32 @@ function goToDetail(name) {
           <span v-else>0</span>
         </template>
       </Column>
+      <Column header="Report" style="width: 8rem;">
+        <template #body="{ data }">
+          <Button
+            label="PDF"
+            icon="pi pi-file-pdf"
+            size="small"
+            text
+            severity="danger"
+            @click.stop="openBackupReportPDF(data.name)"
+          />
+        </template>
+      </Column>
     </DataTable>
   </div>
 </template>
 
 <style scoped>
+.page-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 1.5rem;
+  flex-wrap: wrap;
+}
+
 .filters {
   display: flex;
   gap: 0.75rem;

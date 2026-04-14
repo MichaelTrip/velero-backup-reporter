@@ -86,7 +86,7 @@ function hasEntries(obj) {
       <h2>{{ backup.name }}</h2>
       <div class="detail-actions">
         <Button label="Back" icon="pi pi-arrow-left" severity="secondary" outlined @click="router.back()" />
-        <Button label="Download PDF" icon="pi pi-file-pdf" outlined @click="downloadPDF" />
+        <Button label="Backup Report PDF" icon="pi pi-file-pdf" severity="danger" outlined @click="downloadPDF" />
       </div>
     </div>
 
