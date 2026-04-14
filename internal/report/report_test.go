@@ -21,36 +21,69 @@ func TestGenerateSummary(t *testing.T) {
 		{Name: "b5", Phase: "InProgress"},
 		{Name: "b6", Phase: "Deleting"},
 		{Name: "b7", Phase: "New"},
+		{Name: "b8", Phase: "FailedValidation", StartTimestamp: timePtr(now.Add(-20 * time.Minute))},
+		{Name: "b9", Phase: "FinalizingPartiallyFailed", CompletionTimestamp: timePtr(now.Add(-10 * time.Minute))},
 	}
 
 	summary := generateSummary(backups)
 
-	if summary.TotalBackups != 7 {
-		t.Errorf("expected 7 total, got %d", summary.TotalBackups)
+	if summary.TotalBackups != 9 {
+		t.Errorf("expected 9 total, got %d", summary.TotalBackups)
 	}
 	if summary.Completed != 2 {
 		t.Errorf("expected 2 completed, got %d", summary.Completed)
 	}
-	if summary.Failed != 1 {
-		t.Errorf("expected 1 failed, got %d", summary.Failed)
+	if summary.Failed != 2 {
+		t.Errorf("expected 2 failed, got %d", summary.Failed)
 	}
-	if summary.PartiallyFailed != 1 {
-		t.Errorf("expected 1 partially failed, got %d", summary.PartiallyFailed)
+	if summary.PartiallyFailed != 2 {
+		t.Errorf("expected 2 partially failed, got %d", summary.PartiallyFailed)
 	}
-	if summary.InProgress != 1 {
-		t.Errorf("expected 1 in progress, got %d", summary.InProgress)
+	if summary.NotStarted != 1 {
+		t.Errorf("expected 1 not started, got %d", summary.NotStarted)
+	}
+	if summary.InProgress != 2 {
+		t.Errorf("expected 2 in progress, got %d", summary.InProgress)
 	}
 	if summary.Deleting != 1 {
 		t.Errorf("expected 1 deleting, got %d", summary.Deleting)
 	}
-	if summary.Other != 1 {
-		t.Errorf("expected 1 other, got %d", summary.Other)
+	if summary.Other != 0 {
+		t.Errorf("expected 0 other, got %d", summary.Other)
 	}
 	if summary.LastSuccessful == nil {
 		t.Fatal("expected last successful timestamp")
 	}
 	if summary.LastFailed == nil {
 		t.Fatal("expected last failed timestamp")
+	}
+	if !summary.LastFailed.Equal(now.Add(-20 * time.Minute)) {
+		t.Errorf("expected last failed to use latest failed-like timestamp, got %v", summary.LastFailed)
+	}
+}
+
+func TestGeneratePeriodSummaries_MapsFailureVariants(t *testing.T) {
+	now := time.Now()
+	backups := []collector.BackupInfo{
+		{Name: "b1", Phase: "Completed", CompletionTimestamp: timePtr(now.Add(-2 * time.Hour))},
+		{Name: "b2", Phase: "FailedValidation", CompletionTimestamp: timePtr(now.Add(-3 * time.Hour))},
+		{Name: "b3", Phase: "FinalizingPartiallyFailed", CompletionTimestamp: timePtr(now.Add(-4 * time.Hour))},
+	}
+
+	periods := generatePeriodSummaries(backups)
+	summary := periods["Last 24 Hours"]
+
+	if summary.TotalBackups != 3 {
+		t.Fatalf("expected 3 total backups, got %d", summary.TotalBackups)
+	}
+	if summary.Completed != 1 {
+		t.Fatalf("expected 1 completed, got %d", summary.Completed)
+	}
+	if summary.Failed != 1 {
+		t.Fatalf("expected 1 failed, got %d", summary.Failed)
+	}
+	if summary.PartiallyFailed != 1 {
+		t.Fatalf("expected 1 partially failed, got %d", summary.PartiallyFailed)
 	}
 }
 
@@ -64,8 +97,8 @@ func TestGenerateDetails_Duration(t *testing.T) {
 			Phase:               "Completed",
 			StartTimestamp:      timePtr(start),
 			CompletionTimestamp: timePtr(end),
-			ItemsBackedUp:      50,
-			TotalItems:         100,
+			ItemsBackedUp:       50,
+			TotalItems:          100,
 		},
 	}
 

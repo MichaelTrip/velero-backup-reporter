@@ -56,7 +56,16 @@ func NewSender(cfg config.SMTPConfig, emailCfg config.EmailConfig) (*Sender, err
 			case "InProgress":
 				return "#3b82f6"
 			default:
-				return "#6b7280"
+				switch {
+				case strings.Contains(status, "PartiallyFailed"):
+					return "#f59e0b"
+				case strings.Contains(status, "Failed"):
+					return "#ef4444"
+				case status == "New" || status == "Queued" || status == "ReadyToStart" || status == "WaitingForPluginOperations" || status == "Finalizing":
+					return "#3b82f6"
+				default:
+					return "#6b7280"
+				}
 			}
 		},
 	}
@@ -161,6 +170,9 @@ func filterBackupDetailsWithinWindow(backups []report.BackupDetail, now time.Tim
 		}
 
 		if runTime == nil {
+			if isNotStartedStatus(b.Status) {
+				filtered = append(filtered, b)
+			}
 			continue
 		}
 
@@ -170,6 +182,15 @@ func filterBackupDetailsWithinWindow(backups []report.BackupDetail, now time.Tim
 	}
 
 	return filtered
+}
+
+func isNotStartedStatus(status string) bool {
+	switch status {
+	case "New", "Queued", "ReadyToStart", "FailedValidation":
+		return true
+	default:
+		return false
+	}
 }
 
 func buildMessage(from string, to []string, subject, htmlBody string) string {
@@ -210,6 +231,12 @@ const emailTemplate = `<!DOCTYPE html>
             <td style="padding: 8px 12px; background: #f8f9fb; border: 1px solid #eee;"><strong>Partially Failed</strong></td>
             <td style="padding: 8px 12px; border: 1px solid #eee; color: #92400e;">{{.Summary.PartiallyFailed}}</td>
         </tr>
+		<tr>
+			<td style="padding: 8px 12px; background: #f8f9fb; border: 1px solid #eee;"><strong>Not Started</strong></td>
+			<td style="padding: 8px 12px; border: 1px solid #eee; color: #1d4ed8;">{{.Summary.NotStarted}}</td>
+			<td style="padding: 8px 12px; background: #f8f9fb; border: 1px solid #eee;"><strong></strong></td>
+			<td style="padding: 8px 12px; border: 1px solid #eee;"></td>
+		</tr>
         <tr>
             <td style="padding: 8px 12px; background: #f8f9fb; border: 1px solid #eee;"><strong>Last Successful</strong></td>
             <td style="padding: 8px 12px; border: 1px solid #eee;" colspan="3">{{formatTime .Summary.LastSuccessful}}</td>
@@ -270,6 +297,14 @@ const emailTemplate = `<!DOCTYPE html>
 		<tr>
 			<td style="padding: 8px 12px; border: 1px solid #e5e7eb; background: #f8f9fb; font-size: 12px; font-weight: 600; color: #4b5563;">Warnings / Errors</td>
 			<td style="padding: 8px 12px; border: 1px solid #e5e7eb; font-size: 13px;">{{.Warnings}} / {{.Errors}}</td>
+		</tr>
+		<tr>
+			<td style="padding: 8px 12px; border: 1px solid #e5e7eb; background: #f8f9fb; font-size: 12px; font-weight: 600; color: #4b5563;">Failure Reason</td>
+			<td style="padding: 8px 12px; border: 1px solid #e5e7eb; font-size: 13px;">{{if .FailureReason}}{{.FailureReason}}{{else}}-{{end}}</td>
+		</tr>
+		<tr>
+			<td style="padding: 8px 12px; border: 1px solid #e5e7eb; background: #f8f9fb; font-size: 12px; font-weight: 600; color: #4b5563;">Validation Errors</td>
+			<td style="padding: 8px 12px; border: 1px solid #e5e7eb; font-size: 13px;">{{if .ValidationErrors}}{{range .ValidationErrors}}{{.}}<br>{{end}}{{else}}-{{end}}</td>
 		</tr>
 	</table>
 	{{end}}

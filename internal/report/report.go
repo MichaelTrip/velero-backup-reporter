@@ -2,6 +2,7 @@ package report
 
 import (
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/michael/velero-backup-reporter/internal/collector"
@@ -22,6 +23,7 @@ type BackupSummary struct {
 	Completed       int
 	Failed          int
 	PartiallyFailed int
+	NotStarted      int
 	InProgress      int
 	Deleting        int
 	Other           int
@@ -52,16 +54,18 @@ type ScheduleSummary struct {
 
 // BackupDetail contains information about a single backup.
 type BackupDetail struct {
-	Name           string
-	ScheduleName   string
-	Status         string
-	StartTime      *time.Time
-	CompletionTime *time.Time
-	Duration       time.Duration
-	ItemsBackedUp  int
-	TotalItems     int
-	Warnings       int
-	Errors         int
+	Name             string
+	ScheduleName     string
+	Status           string
+	StartTime        *time.Time
+	CompletionTime   *time.Time
+	Duration         time.Duration
+	ItemsBackedUp    int
+	TotalItems       int
+	Warnings         int
+	Errors           int
+	FailureReason    string
+	ValidationErrors []string
 }
 
 // Generate creates a BackupReport from collected backup and schedule data.
@@ -84,22 +88,30 @@ func generateSummary(backups []collector.BackupInfo) BackupSummary {
 	}
 
 	for _, b := range backups {
-		switch b.Phase {
-		case "Completed":
+		if backupDidNotStart(b) {
+			summary.NotStarted++
+		}
+
+		switch classifyPhase(b.Phase) {
+		case phaseClassCompleted:
 			summary.Completed++
-			if summary.LastSuccessful == nil || (b.CompletionTimestamp != nil && b.CompletionTimestamp.After(*summary.LastSuccessful)) {
-				summary.LastSuccessful = b.CompletionTimestamp
+			if ts := backupRelevantTimestamp(b); ts != nil {
+				if summary.LastSuccessful == nil || ts.After(*summary.LastSuccessful) {
+					summary.LastSuccessful = ts
+				}
 			}
-		case "Failed":
+		case phaseClassFailed:
 			summary.Failed++
-			if summary.LastFailed == nil || (b.CompletionTimestamp != nil && b.CompletionTimestamp.After(*summary.LastFailed)) {
-				summary.LastFailed = b.CompletionTimestamp
+			if ts := backupRelevantTimestamp(b); ts != nil {
+				if summary.LastFailed == nil || ts.After(*summary.LastFailed) {
+					summary.LastFailed = ts
+				}
 			}
-		case "PartiallyFailed":
+		case phaseClassPartiallyFailed:
 			summary.PartiallyFailed++
-		case "InProgress":
+		case phaseClassInProgress:
 			summary.InProgress++
-		case "Deleting":
+		case phaseClassDeleting:
 			summary.Deleting++
 		default:
 			summary.Other++
@@ -114,15 +126,17 @@ func generateDetails(backups []collector.BackupInfo) []BackupDetail {
 
 	for _, b := range backups {
 		detail := BackupDetail{
-			Name:           b.Name,
-			ScheduleName:   b.ScheduleName,
-			Status:         b.Phase,
-			StartTime:      b.StartTimestamp,
-			CompletionTime: b.CompletionTimestamp,
-			ItemsBackedUp:  b.ItemsBackedUp,
-			TotalItems:     b.TotalItems,
-			Warnings:       b.Warnings,
-			Errors:         b.Errors,
+			Name:             b.Name,
+			ScheduleName:     b.ScheduleName,
+			Status:           b.Phase,
+			StartTime:        b.StartTimestamp,
+			CompletionTime:   b.CompletionTimestamp,
+			ItemsBackedUp:    b.ItemsBackedUp,
+			TotalItems:       b.TotalItems,
+			Warnings:         b.Warnings,
+			Errors:           b.Errors,
+			FailureReason:    b.FailureReason,
+			ValidationErrors: b.ValidationErrors,
 		}
 
 		if b.StartTimestamp != nil && b.CompletionTimestamp != nil {
@@ -229,12 +243,12 @@ func generatePeriodSummaries(backups []collector.BackupInfo) map[string]BackupPe
 				period.TotalBackups++
 				period.TotalItems += b.TotalItems
 
-				switch b.Phase {
-				case "Completed":
+				switch classifyPhase(b.Phase) {
+				case phaseClassCompleted:
 					period.Completed++
-				case "Failed":
+				case phaseClassFailed:
 					period.Failed++
-				case "PartiallyFailed":
+				case phaseClassPartiallyFailed:
 					period.PartiallyFailed++
 				}
 
@@ -258,4 +272,52 @@ func generatePeriodSummaries(backups []collector.BackupInfo) map[string]BackupPe
 	}
 
 	return summaries
+}
+
+type backupPhaseClass int
+
+const (
+	phaseClassOther backupPhaseClass = iota
+	phaseClassCompleted
+	phaseClassFailed
+	phaseClassPartiallyFailed
+	phaseClassInProgress
+	phaseClassDeleting
+)
+
+func classifyPhase(phase string) backupPhaseClass {
+	switch {
+	case strings.Contains(phase, "PartiallyFailed"):
+		return phaseClassPartiallyFailed
+	case strings.Contains(phase, "Failed"):
+		return phaseClassFailed
+	case phase == "Completed":
+		return phaseClassCompleted
+	case phase == "Deleting":
+		return phaseClassDeleting
+	case phase == "InProgress" || phase == "New" || phase == "Queued" || phase == "ReadyToStart" || phase == "Finalizing" || phase == "WaitingForPluginOperations":
+		return phaseClassInProgress
+	default:
+		return phaseClassOther
+	}
+}
+
+func backupRelevantTimestamp(b collector.BackupInfo) *time.Time {
+	if b.CompletionTimestamp != nil {
+		return b.CompletionTimestamp
+	}
+	return b.StartTimestamp
+}
+
+func backupDidNotStart(b collector.BackupInfo) bool {
+	if b.StartTimestamp != nil || b.CompletionTimestamp != nil {
+		return false
+	}
+
+	switch b.Phase {
+	case "New", "Queued", "ReadyToStart", "FailedValidation":
+		return true
+	default:
+		return false
+	}
 }
