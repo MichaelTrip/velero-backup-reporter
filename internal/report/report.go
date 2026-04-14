@@ -160,8 +160,14 @@ func generateDetails(backups []collector.BackupInfo) []BackupDetail {
 }
 
 func sortBackupDetails(details []BackupDetail) {
-	// Sort by timestamp (newest first)
+	// Show failures first, then keep newest-first ordering within each group.
 	sort.Slice(details, func(i, j int) bool {
+		iPriority := backupDetailPriority(details[i].Status)
+		jPriority := backupDetailPriority(details[j].Status)
+		if iPriority != jPriority {
+			return iPriority < jPriority
+		}
+
 		iTime := details[i].StartTime
 		if iTime == nil {
 			iTime = details[i].CompletionTime
@@ -178,8 +184,25 @@ func sortBackupDetails(details []BackupDetail) {
 			return true
 		}
 
-		return iTime.After(*jTime)
+		if !iTime.Equal(*jTime) {
+			return iTime.After(*jTime)
+		}
+
+		return details[i].Name < details[j].Name
 	})
+}
+
+func backupDetailPriority(status string) int {
+	switch {
+	case status == "Missed":
+		return 0
+	case strings.Contains(status, "PartiallyFailed"):
+		return 1
+	case strings.Contains(status, "Failed"):
+		return 0
+	default:
+		return 2
+	}
 }
 
 func generateScheduleSummaries(backups []collector.BackupInfo, schedules []collector.ScheduleInfo, missedBySchedule map[string]bool) []ScheduleSummary {

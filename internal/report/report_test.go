@@ -112,6 +112,30 @@ func TestGenerateDetails_Duration(t *testing.T) {
 	}
 }
 
+func TestGenerateDetails_FailedFirst(t *testing.T) {
+	now := time.Now()
+	backups := []collector.BackupInfo{
+		{Name: "completed-new", Phase: "Completed", StartTimestamp: timePtr(now.Add(-1 * time.Hour))},
+		{Name: "failed-old", Phase: "Failed", StartTimestamp: timePtr(now.Add(-5 * time.Hour))},
+		{Name: "partial-old", Phase: "PartiallyFailed", StartTimestamp: timePtr(now.Add(-4 * time.Hour))},
+	}
+
+	details := generateDetails(backups)
+	if len(details) != 3 {
+		t.Fatalf("expected 3 details, got %d", len(details))
+	}
+
+	if details[0].Status != "Failed" {
+		t.Fatalf("expected first detail to be failed, got %s", details[0].Status)
+	}
+	if details[1].Status != "PartiallyFailed" {
+		t.Fatalf("expected second detail to be partially failed, got %s", details[1].Status)
+	}
+	if details[2].Status != "Completed" {
+		t.Fatalf("expected completed detail after failures, got %s", details[2].Status)
+	}
+}
+
 func TestGenerateScheduleSummaries(t *testing.T) {
 	now := time.Now()
 	backups := []collector.BackupInfo{
