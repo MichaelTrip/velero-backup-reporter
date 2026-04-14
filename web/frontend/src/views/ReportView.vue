@@ -7,17 +7,57 @@ import Tag from 'primevue/tag'
 import Skeleton from 'primevue/skeleton'
 import Message from 'primevue/message'
 import Button from 'primevue/button'
-import Panel from 'primevue/panel'
 import Chart from 'primevue/chart'
 import { statusSeverity, formatTime } from '../composables/useBackupUtils.js'
 
 const report = ref(null)
 const loading = ref(true)
 const error = ref(null)
+const selectedHours = ref(24)
+const useCustomRange = ref(false)
+const rangeStart = ref('')
+const rangeEnd = ref('')
+const windowLabel = ref('Last 24 Hours')
 
 onMounted(async () => {
+  const now = new Date()
+  const end = new Date(now.getTime() - now.getTimezoneOffset() * 60000)
+  const start = new Date(end.getTime() - selectedHours.value * 60 * 60 * 1000)
+  rangeEnd.value = end.toISOString().slice(0, 16)
+  rangeStart.value = start.toISOString().slice(0, 16)
+  await loadReport()
+})
+
+function buildQueryParams() {
+  const params = new URLSearchParams()
+  if (useCustomRange.value && rangeStart.value && rangeEnd.value) {
+    const from = new Date(rangeStart.value)
+    const to = new Date(rangeEnd.value)
+    if (!Number.isNaN(from.getTime()) && !Number.isNaN(to.getTime())) {
+      params.set('from', from.toISOString())
+      params.set('to', to.toISOString())
+    }
+  } else {
+    params.set('hours', String(selectedHours.value))
+  }
+  const query = params.toString()
+  return query ? `?${query}` : ''
+}
+
+function updateWindowLabel() {
+  if (useCustomRange.value && rangeStart.value && rangeEnd.value) {
+    windowLabel.value = `${formatTime(new Date(rangeStart.value))} -> ${formatTime(new Date(rangeEnd.value))}`
+    return
+  }
+  windowLabel.value = `Last ${selectedHours.value} Hours`
+}
+
+async function loadReport() {
+  loading.value = true
+  error.value = null
   try {
-    const res = await fetch('/api/v1/report')
+    updateWindowLabel()
+    const res = await fetch(`/api/v1/report${buildQueryParams()}`)
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
     report.value = await res.json()
   } catch (e) {
@@ -25,7 +65,7 @@ onMounted(async () => {
   } finally {
     loading.value = false
   }
-})
+}
 
 // Summary chart data
 const summaryChartData = computed(() => {
@@ -120,6 +160,10 @@ function exportReport() {
   window.URL.revokeObjectURL(url)
   document.body.removeChild(a)
 }
+
+function exportPDF() {
+  window.open(`/api/v1/report/pdf${buildQueryParams()}`, '_blank')
+}
 </script>
 
 <template>
@@ -142,13 +186,46 @@ function exportReport() {
         <p style="color: var(--p-text-color-secondary); margin: 0.5rem 0 0 0;">
           Generated: {{ formatTime(new Date(report.generatedAt)) }}
         </p>
+        <p style="color: var(--p-text-color-secondary); margin: 0.25rem 0 0 0;">
+          Window: {{ windowLabel }}
+        </p>
       </div>
-      <Button
-        label="Export JSON"
-        icon="pi pi-download"
-        severity="secondary"
-        @click="exportReport"
-      />
+      <div class="report-actions">
+        <div class="window-controls">
+          <label class="window-toggle">
+            <input v-model="useCustomRange" type="checkbox">
+            Use custom range
+          </label>
+          <template v-if="useCustomRange">
+            <input v-model="rangeStart" type="datetime-local" class="window-input">
+            <input v-model="rangeEnd" type="datetime-local" class="window-input">
+          </template>
+          <template v-else>
+            <select v-model.number="selectedHours" class="window-select">
+              <option :value="6">Last 6 hours</option>
+              <option :value="12">Last 12 hours</option>
+              <option :value="24">Last 24 hours</option>
+              <option :value="48">Last 48 hours</option>
+              <option :value="72">Last 72 hours</option>
+              <option :value="168">Last 7 days</option>
+            </select>
+          </template>
+          <Button label="Apply" icon="pi pi-refresh" size="small" @click="loadReport" />
+        </div>
+        <Button
+          label="Export PDF"
+          icon="pi pi-file-pdf"
+          severity="danger"
+          outlined
+          @click="exportPDF"
+        />
+        <Button
+          label="Export JSON"
+          icon="pi pi-download"
+          severity="secondary"
+          @click="exportReport"
+        />
+      </div>
     </div>
 
     <!-- Overall Summary Stats -->
@@ -386,8 +463,41 @@ function exportReport() {
 .report-header {
   display: flex;
   justify-content: space-between;
-  align-items: center;
+  align-items: flex-start;
   margin-bottom: 2rem;
+  gap: 1rem;
+}
+
+.report-actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.window-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.window-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.875rem;
+  color: var(--p-text-color-secondary);
+}
+
+.window-select,
+.window-input {
+  border: 1px solid var(--p-surface-border);
+  border-radius: 6px;
+  padding: 0.4rem 0.55rem;
+  background: var(--p-surface-0);
+  color: var(--p-text-color);
+  font-size: 0.875rem;
 }
 
 .summary-stats {

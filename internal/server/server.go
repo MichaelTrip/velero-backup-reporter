@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"sort"
+	"strconv"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -46,6 +47,7 @@ func New(c *collector.Collector, opts ...Option) (*Server, error) {
 		r.Use(jsonContentType)
 		r.Get("/dashboard", s.handleAPIDashboard)
 		r.Get("/report", s.handleAPIReport)
+		r.Get("/report/pdf", s.handleAPIReportPDF)
 		r.Get("/backups", s.handleAPIBackups)
 		r.Get("/backups/{name}", s.handleAPIBackupDetail)
 		r.Get("/backups/{name}/logs", s.handleAPIBackupLogs)
@@ -294,7 +296,11 @@ type periodSummaryJSON struct {
 }
 
 func (s *Server) handleAPIReport(w http.ResponseWriter, r *http.Request) {
-	rpt := report.Generate(s.collector.Backups(), s.collector.Schedules())
+	rpt, _, err := s.buildReportForRequest(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 
 	// Sort schedules by name
 	sort.Slice(rpt.ScheduleSummaries, func(i, j int) bool {
@@ -364,6 +370,100 @@ func (s *Server) handleAPIReport(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, resp)
+}
+
+func (s *Server) handleAPIReportPDF(w http.ResponseWriter, r *http.Request) {
+	rpt, windowLabel, err := s.buildReportForRequest(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	pdfBytes, err := pdf.GenerateWindowReport(rpt, windowLabel)
+	if err != nil {
+		log.Printf("ERROR: generating report PDF: %v", err)
+		writeError(w, http.StatusInternalServerError, "failed to generate report PDF")
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/pdf")
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"backup-report-%s.pdf\"", time.Now().UTC().Format("20060102-150405")))
+	w.Write(pdfBytes)
+}
+
+func (s *Server) buildReportForRequest(r *http.Request) (report.BackupReport, string, error) {
+	from, to, label, err := parseReportWindow(r)
+	if err != nil {
+		return report.BackupReport{}, "", err
+	}
+
+	backups := s.collector.Backups()
+	if from != nil && to != nil {
+		backups = filterBackupsByWindow(backups, *from, *to)
+	}
+
+	rpt := report.Generate(backups, s.collector.Schedules())
+	return rpt, label, nil
+}
+
+func parseReportWindow(r *http.Request) (*time.Time, *time.Time, string, error) {
+	q := r.URL.Query()
+	hoursParam := q.Get("hours")
+	fromParam := q.Get("from")
+	toParam := q.Get("to")
+
+	if fromParam != "" || toParam != "" {
+		if fromParam == "" || toParam == "" {
+			return nil, nil, "", fmt.Errorf("both from and to must be provided")
+		}
+
+		from, err := time.Parse(time.RFC3339, fromParam)
+		if err != nil {
+			return nil, nil, "", fmt.Errorf("invalid from timestamp, expected RFC3339")
+		}
+		to, err := time.Parse(time.RFC3339, toParam)
+		if err != nil {
+			return nil, nil, "", fmt.Errorf("invalid to timestamp, expected RFC3339")
+		}
+		if !from.Before(to) {
+			return nil, nil, "", fmt.Errorf("from must be before to")
+		}
+
+		fromUTC := from.UTC()
+		toUTC := to.UTC()
+		label := fmt.Sprintf("Window: %s to %s", fromUTC.Format("2006-01-02 15:04 UTC"), toUTC.Format("2006-01-02 15:04 UTC"))
+		return &fromUTC, &toUTC, label, nil
+	}
+
+	if hoursParam != "" {
+		hours, err := strconv.Atoi(hoursParam)
+		if err != nil || hours <= 0 {
+			return nil, nil, "", fmt.Errorf("hours must be a positive integer")
+		}
+		to := time.Now().UTC()
+		from := to.Add(-time.Duration(hours) * time.Hour)
+		label := fmt.Sprintf("Last %d Hours", hours)
+		return &from, &to, label, nil
+	}
+
+	return nil, nil, "All Time", nil
+}
+
+func filterBackupsByWindow(backups []collector.BackupInfo, from, to time.Time) []collector.BackupInfo {
+	filtered := make([]collector.BackupInfo, 0, len(backups))
+	for _, b := range backups {
+		ts := b.CompletionTimestamp
+		if ts == nil {
+			ts = b.StartTimestamp
+		}
+		if ts == nil {
+			continue
+		}
+		if (ts.Equal(from) || ts.After(from)) && (ts.Equal(to) || ts.Before(to)) {
+			filtered = append(filtered, b)
+		}
+	}
+	return filtered
 }
 
 func formatDuration(d time.Duration) string {
