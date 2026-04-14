@@ -2,8 +2,8 @@ apiVersion: v2
 name: velero-backup-reporter
 description: Backup report generator and web UI for Velero
 type: application
-version: v1.0.1
-appVersion: "v1.0.1"
+version: v1.1.0
+appVersion: "v1.1.0"
 maintainers:
   - name: MichaelTrip
     url: https://github.com/MichaelTrip
