@@ -8,7 +8,7 @@ RUN npm ci
 COPY web/frontend/ .
 RUN npm run build
 
-FROM golang:1.25-alpine AS builder
+FROM golang:1.27-alpine AS builder
 
 ARG VERSION=dev
 
@@ -21,7 +21,7 @@ COPY . .
 COPY --from=frontend /app/web/dist ./web/dist
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags "-X main.version=${VERSION}" -o velero-backup-reporter ./cmd/velero-backup-reporter/
 
-FROM alpine:3.21
+FROM alpine:3.24
 
 RUN apk add --no-cache ca-certificates
 
